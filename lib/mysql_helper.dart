@@ -63,6 +63,29 @@ class MySqlHelper {
           FOREIGN KEY (`id_user`) REFERENCES `users`(`id_user`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
       ''');
+
+      // Auto-create tabel session_history jika belum ada
+      await conn.query('''
+        CREATE TABLE IF NOT EXISTS `session_history` (
+          `id_session` INT AUTO_INCREMENT PRIMARY KEY,
+          `order_id` VARCHAR(100) NOT NULL UNIQUE,
+          `id_user` INT NOT NULL,
+          `id_template` INT NULL,
+          `template_name` VARCHAR(100) NULL,
+          `print_count` INT NOT NULL DEFAULT 1,
+          `total_price` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+          `payment_type` VARCHAR(50) NOT NULL DEFAULT 'qris',
+          `payment_status` VARCHAR(50) NOT NULL DEFAULT 'pending',
+          `session_status` VARCHAR(50) NOT NULL DEFAULT 'started',
+          `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX `idx_order_id` (`order_id`),
+          INDEX `idx_user_date` (`id_user`, `created_at`),
+          INDEX `idx_payment_status` (`payment_status`),
+          FOREIGN KEY (`id_user`) REFERENCES `users`(`id_user`) ON DELETE CASCADE,
+          FOREIGN KEY (`id_template`) REFERENCES `templates`(`id_template`) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      ''');
       
       return true;
     } catch (e) {
@@ -301,5 +324,126 @@ class MySqlHelper {
   /// Menghapus template berdasarkan ID
   static Future<void> deleteTemplate(int idTemplate) async {
     await execute('DELETE FROM templates WHERE id_template = ?', [idTemplate]);
+  }
+
+  /// Membuat catatan sesi baru saat QRIS di-generate
+  static Future<void> createSessionHistory({
+    required String orderId,
+    required int idUser,
+    int? idTemplate,
+    String? templateName,
+    required int printCount,
+    required double totalPrice,
+    String paymentType = 'qris',
+  }) async {
+    try {
+      await execute('''
+        INSERT INTO session_history (
+          order_id, id_user, id_template, template_name, print_count, total_price, payment_type, payment_status, session_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'started')
+        ON DUPLICATE KEY UPDATE 
+          print_count = VALUES(print_count),
+          total_price = VALUES(total_price),
+          id_template = VALUES(id_template),
+          template_name = VALUES(template_name)
+      ''', [orderId, idUser, idTemplate, templateName, printCount, totalPrice, paymentType]);
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error pada createSessionHistory: $e');
+    }
+  }
+
+  /// Update status pembayaran dan tahapan sesi
+  static Future<void> updateSessionStatus({
+    required String orderId,
+    required String paymentStatus,
+    String? sessionStatus,
+    int? idTemplate,
+    String? templateName,
+  }) async {
+    try {
+      List<String> setClauses = ['payment_status = ?'];
+      List<Object?> params = [paymentStatus];
+
+      if (sessionStatus != null) {
+        setClauses.add('session_status = ?');
+        params.add(sessionStatus);
+      }
+      if (idTemplate != null) {
+        setClauses.add('id_template = ?');
+        params.add(idTemplate);
+      }
+      if (templateName != null) {
+        setClauses.add('template_name = ?');
+        params.add(templateName);
+      }
+
+      params.add(orderId);
+
+      await execute('''
+        UPDATE session_history 
+        SET ${setClauses.join(', ')} 
+        WHERE order_id = ?
+      ''', params);
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error pada updateSessionStatus: $e');
+    }
+  }
+
+  /// Mengambil riwayat sesi untuk booth tertentu (atau seluruh booth jika admin)
+  static Future<List<Map<String, dynamic>>> getSessionHistories({int? idUser, int limit = 50}) async {
+    try {
+      Results results;
+      if (idUser != null) {
+        results = await query(
+          '''
+          SELECT sh.*, u.username, u.alamat_photobox 
+          FROM session_history sh
+          JOIN users u ON sh.id_user = u.id_user
+          WHERE sh.id_user = ?
+          ORDER BY sh.id_session DESC
+          LIMIT ?
+          ''',
+          [idUser, limit],
+        );
+      } else {
+        results = await query(
+          '''
+          SELECT sh.*, u.username, u.alamat_photobox 
+          FROM session_history sh
+          JOIN users u ON sh.id_user = u.id_user
+          ORDER BY sh.id_session DESC
+          LIMIT ?
+          ''',
+          [limit],
+        );
+      }
+
+      List<Map<String, dynamic>> list = [];
+      for (var row in results) {
+        list.add({
+          'id_session': row['id_session'] as int,
+          'order_id': row['order_id'] as String,
+          'id_user': row['id_user'] as int,
+          'username': row['username'] as String?,
+          'alamat_photobox': row['alamat_photobox']?.toString(),
+          'id_template': row['id_template'] as int?,
+          'template_name': row['template_name'] as String?,
+          'print_count': row['print_count'] as int,
+          'total_price': double.tryParse(row['total_price'].toString()) ?? 0.0,
+          'payment_type': row['payment_type'] as String,
+          'payment_status': row['payment_status'] as String,
+          'session_status': row['session_status'] as String,
+          'created_at': row['created_at'].toString(),
+          'updated_at': row['updated_at'].toString(),
+        });
+      }
+      return list;
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error pada getSessionHistories: $e');
+      return [];
+    }
   }
 }

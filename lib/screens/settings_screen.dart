@@ -10,6 +10,7 @@ import 'package:image/image.dart' as img;
 import 'session_screen.dart';
 import 'welcome_screen.dart';
 import '../mysql_helper.dart';
+import '../payment_config.dart';
 
 class SettingsScreen extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -677,7 +678,129 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 24),
+                        
+                        // Card Payment Gateway Switcher
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                          margin: const EdgeInsets.only(bottom: 24),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF161616),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.white10,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 22),
+                              ),
+                              const SizedBox(width: 16),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        'PAYMENT GATEWAY (QRIS)',
+                                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.redAccent.withAlpha(40) : Colors.blueAccent.withAlpha(40),
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.redAccent : Colors.blueAccent,
+                                            width: 1,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          PaymentConfig.activeGateway == PaymentGateway.doku ? 'DOKU (PROD)' : 'MIDTRANS (SANDBOX)',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.redAccent : Colors.blueAccent,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  const Text(
+                                    'Pilih penyedia QRIS yang aktif untuk melayani pembayaran sesi booth',
+                                    style: TextStyle(fontSize: 11, color: Colors.white54),
+                                  ),
+                                ],
+                              ),
+                              const Spacer(),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: Colors.white24),
+                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                                child: Row(
+                                  children: [
+                                    InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          PaymentConfig.saveConfig(PaymentGateway.doku);
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.white : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'DOKU',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.black : Colors.white70,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          PaymentConfig.saveConfig(PaymentGateway.midtrans);
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: PaymentConfig.activeGateway == PaymentGateway.midtrans ? Colors.white : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'MIDTRANS',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: PaymentConfig.activeGateway == PaymentGateway.midtrans ? Colors.black : Colors.white70,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                         
                         if (_isLoadingDevices)
                           const Expanded(
@@ -1208,9 +1331,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildTemplateDesigner() {
-    // Ukuran kanvas desainer (sesuai rasio kertas custom 11.5 cm / 14.7 cm)
+    // Ukuran kanvas desainer (sesuai rasio kertas 4R: 102 mm x 152 mm)
     const double designerHeight = 500.0;
-    const double designerWidth = designerHeight * (11.5 / 14.7); // ~391.1 pixels
+    const double designerWidth = designerHeight * (102.0 / 152.0); // ~335.5 pixels
 
     return Expanded(
       child: Row(
@@ -1706,7 +1829,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
     if (_initialized) return;
     _initialized = true;
 
-    final double targetRatio = 11.5 / 14.7;
+    final double targetRatio = 102.0 / 152.0;
     final double imgRatio = displayW / displayH;
 
     if (imgRatio > targetRatio) {
@@ -1801,7 +1924,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'CROP TEMPLATE OVERLAY (A6)',
+                            'CROP TEMPLATE OVERLAY (4R)',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -1811,7 +1934,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                           ),
                           SizedBox(height: 4),
                           Text(
-                            'Sesuaikan bingkai ke rasio 11.5 cm x 14.7 cm (A6 Portrait)',
+                            'Sesuaikan bingkai ke rasio 4R (102 mm x 152 mm / Portrait)',
                             style: TextStyle(fontSize: 12, color: Colors.white54),
                           ),
                         ],
@@ -1916,7 +2039,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                                     onPanUpdate: (details) {
                                       setState(() {
                                         final double newWidth = (cropWidth + details.delta.dx).clamp(40.0, displayW - cropLeft);
-                                        final double newHeight = newWidth / (11.5 / 14.7);
+                                        final double newHeight = newWidth / (102.0 / 152.0);
                                         if (cropTop + newHeight <= displayH) {
                                           cropWidth = newWidth;
                                           cropHeight = newHeight;

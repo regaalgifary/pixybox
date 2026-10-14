@@ -64,3 +64,24 @@ CREATE TABLE IF NOT EXISTS `template_assignments` (
   FOREIGN KEY (`id_template`) REFERENCES `templates`(`id_template`) ON DELETE CASCADE,
   FOREIGN KEY (`id_user`) REFERENCES `users`(`id_user`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `session_history` (
+  `id_session` INT AUTO_INCREMENT PRIMARY KEY,
+  `order_id` VARCHAR(100) NOT NULL UNIQUE,
+  `id_user` INT NOT NULL COMMENT 'ID akun booth photobox',
+  `id_template` INT NULL COMMENT 'ID template yang digunakan',
+  `template_name` VARCHAR(100) NULL COMMENT 'Nama template snapshot jika template terhapus',
+  `print_count` INT NOT NULL DEFAULT 1 COMMENT 'Jumlah lembar cetak',
+  `total_price` DECIMAL(12, 2) NOT NULL DEFAULT 0.00 COMMENT 'Total nominal transaksi (Rp)',
+  `payment_type` VARCHAR(50) NOT NULL DEFAULT 'qris' COMMENT 'Metode bayar',
+  `payment_status` VARCHAR(50) NOT NULL DEFAULT 'pending' COMMENT 'Status Midtrans (pending, settlement, expire, cancel)',
+  `session_status` VARCHAR(50) NOT NULL DEFAULT 'started' COMMENT 'Status alur sesi (started, paid, completed, cancelled)',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_order_id` (`order_id`),
+  INDEX `idx_user_date` (`id_user`, `created_at`),
+  INDEX `idx_payment_status` (`payment_status`),
+  FOREIGN KEY (`id_user`) REFERENCES `users`(`id_user`) ON DELETE CASCADE,
+  FOREIGN KEY (`id_template`) REFERENCES `templates`(`id_template`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

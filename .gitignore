@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local configuration & sensitive credentials
+payment_keys.json
+payment_config.json
+print_calibration.json

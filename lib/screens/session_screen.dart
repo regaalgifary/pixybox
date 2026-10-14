@@ -8,8 +8,11 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:image/image.dart' as img;
+import 'package:qr_flutter/qr_flutter.dart';
 import '../mysql_helper.dart';
 import '../midtrans_service.dart';
+import '../doku_service.dart';
+import '../payment_config.dart';
 
 class SessionScreen extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -31,11 +34,13 @@ class _SessionScreenState extends State<SessionScreen> {
   // Stages: PAYMENT, SHOOTING, SELECTION, PRINTING, DONE
   String _currentStage = 'PAYMENT';
 
-  // Midtrans QRIS variables
+  // QRIS Payment variables (Midtrans & DOKU)
   String? _qrisUrl;
+  String? _qrisString;
   String? _currentOrderId;
   Timer? _qrisPollingTimer;
   bool _isGeneratingQR = false;
+  bool _isCheckingPayment = false;
   String _paymentStatus = 'pending';
 
   int _selectedPrintCount = 1;
@@ -158,21 +163,45 @@ class _SessionScreenState extends State<SessionScreen> {
     setState(() {
       _isGeneratingQR = true;
       _qrisUrl = null;
+      _qrisString = null;
       _paymentStatus = 'pending';
     });
 
     final orderId = 'PB-${widget.user['id_user']}-${DateTime.now().millisecondsSinceEpoch}';
     _currentOrderId = orderId;
 
-    final result = await MidtransService.generateQRIS(
-      orderId: orderId,
-      amount: _price.toInt(),
-      itemName: "PixyBox ${_selectedPrintCount}x cetak",
-    );
+    final isDoku = PaymentConfig.activeGateway == PaymentGateway.doku;
+    Map<String, dynamic>? result;
+
+    if (isDoku) {
+      result = await DokuService.generateQRIS(
+        orderId: orderId,
+        amount: _price.toInt(),
+        itemName: "PixyBox ${_selectedPrintCount}x cetak",
+      );
+    } else {
+      result = await MidtransService.generateQRIS(
+        orderId: orderId,
+        amount: _price.toInt(),
+        itemName: "PixyBox ${_selectedPrintCount}x cetak",
+      );
+    }
 
     if (result != null && mounted && _currentOrderId == orderId) {
+      // Simpan session awal ke database
+      MySqlHelper.createSessionHistory(
+        orderId: orderId,
+        idUser: widget.user['id_user'] as int,
+        idTemplate: _selectedTemplate?['id_template'] as int?,
+        templateName: _selectedTemplate?['name'] as String?,
+        printCount: _selectedPrintCount,
+        totalPrice: _price,
+        paymentType: isDoku ? 'doku_qris' : 'midtrans_qris',
+      );
+
       setState(() {
-        _qrisUrl = result['qr_url'];
+        _qrisUrl = result!['qr_url'];
+        _qrisString = result['qr_string'];
         _isGeneratingQR = false;
       });
       _startQrisPolling(orderId);
@@ -184,23 +213,57 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   void _startQrisPolling(String orderId) {
-    _qrisPollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      if (_currentStage != 'PAYMENT') {
-        timer.cancel();
-        return;
-      }
-      final status = await MidtransService.checkPaymentStatus(orderId);
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      setState(() {
-        _paymentStatus = status;
-      });
+    _qrisPollingTimer?.cancel();
+    _isCheckingPayment = false;
 
-      if (status == 'settlement' || status == 'capture') {
+    // Polling setiap 4 detik dengan guard _isCheckingPayment agar request tidak saling bertumpuk
+    _qrisPollingTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
+      if (_currentStage != 'PAYMENT' || _currentOrderId != orderId || !mounted) {
         timer.cancel();
-        _goToShootingStage();
+        return;
+      }
+
+      // Jika request sebelumnya masih berlangsung (misal network lambat), lewati cycle ini
+      if (_isCheckingPayment) {
+        return;
+      }
+
+      _isCheckingPayment = true;
+      try {
+        final isDoku = PaymentConfig.activeGateway == PaymentGateway.doku;
+        final status = isDoku
+            ? await DokuService.checkPaymentStatus(orderId)
+            : await MidtransService.checkPaymentStatus(orderId);
+
+        if (!mounted || _currentStage != 'PAYMENT' || _currentOrderId != orderId) {
+          timer.cancel();
+          return;
+        }
+
+        setState(() {
+          _paymentStatus = status;
+        });
+
+        if (status == 'settlement' || status == 'capture') {
+          timer.cancel();
+          MySqlHelper.updateSessionStatus(
+            orderId: orderId,
+            paymentStatus: status,
+            sessionStatus: 'paid',
+          );
+          _goToShootingStage();
+        } else if (status == 'expire' || status == 'cancel' || status == 'deny') {
+          timer.cancel();
+          MySqlHelper.updateSessionStatus(
+            orderId: orderId,
+            paymentStatus: status,
+            sessionStatus: 'cancelled',
+          );
+        }
+      } catch (e) {
+        debugPrint('Error polling status: $e');
+      } finally {
+        _isCheckingPayment = false;
       }
     });
   }
@@ -323,6 +386,8 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   void _goToShootingStage() {
+    _qrisPollingTimer?.cancel();
+    _isCheckingPayment = false;
     setState(() {
       _currentStage = 'SHOOTING';
       _hasStartedShooting = false;
@@ -414,7 +479,7 @@ class _SessionScreenState extends State<SessionScreen> {
     });
   }
 
-  // Melakukan print riil ke printer dengan size A6 Portrait
+  // Melakukan print riil ke printer dengan size 4R (102mm x 152mm)
   Future<void> _triggerRealPrint() async {
     setState(() {
       _currentStage = 'PRINTING';
@@ -461,97 +526,107 @@ class _SessionScreenState extends State<SessionScreen> {
         orElse: () => printers.isNotEmpty ? printers.first : const Printer(url: 'default', name: 'Default'),
       );
 
-      // Kirim dokumen langsung ke spooler cetak menggunakan format printer
+      // Format kertas 4R: 102 mm x 152 mm (4 x 6 inch)
+      const pageFormat4R = PdfPageFormat(
+        102 * PdfPageFormat.mm,
+        152 * PdfPageFormat.mm,
+        marginAll: 0,
+      );
+
+      // Kirim dokumen langsung ke spooler cetak menggunakan format 4R
       await Printing.directPrintPdf(
         printer: targetPrinter,
+        format: pageFormat4R,
         onLayout: (PdfPageFormat format) async {
           debugPrint('Printer layout format: $format');
           
           final doc = pw.Document();
-          // Gunakan format native dari printer driver (A4) agar driver memetakan area cetak dengan benar
-          final pageFormat = format;
+          final pageFormat = pageFormat4R;
 
-          final double leftPadding = _printOffsetX > 0 ? _printOffsetX * 2.83464567 : 0.0;
-          final double rightPadding = _printOffsetX < 0 ? -_printOffsetX * 2.83464567 : 0.0;
-          final double topPadding = 28.0 + (_printOffsetY * 2.83464567);
+          final double paperWidth = 102.0 * PdfPageFormat.mm; // ~289.13 pt
+          final double paperHeight = 152.0 * PdfPageFormat.mm; // ~430.87 pt
 
-          final double paperWidth = 11.5 * 28.3464567; // ~326 pt
-          final double paperHeight = 14.7 * 28.3464567; // ~417 pt
+          final double leftOffset = _printOffsetX * PdfPageFormat.mm;
+          final double topOffset = _printOffsetY * PdfPageFormat.mm;
 
           doc.addPage(
             pw.Page(
               pageFormat: pageFormat,
               margin: pw.EdgeInsets.zero, // Zero margin agar kontrol posisi presisi
               build: (pw.Context context) {
-                return pw.Align(
-                  alignment: pw.Alignment.topCenter, // Horisontal: tengah, Vertikal: atas
-                  child: pw.Padding(
-                    padding: pw.EdgeInsets.only(
-                      top: topPadding >= 0 ? topPadding : 0,
-                      left: leftPadding,
-                      right: rightPadding,
-                    ),
-                    child: _selectedTemplate != null
-                        ? pw.Container(
-                            width: paperWidth,
-                            height: paperHeight,
-                            child: pw.Stack(
-                              children: [
-                                if (pdfImages.isNotEmpty)
-                                  pw.Positioned(
-                                    left: _selectedTemplate!['slot1_x'] * paperWidth,
-                                    top: _selectedTemplate!['slot1_y'] * paperHeight,
-                                    child: pw.SizedBox(
-                                      width: _selectedTemplate!['slot1_w'] * paperWidth,
-                                      height: _selectedTemplate!['slot1_h'] * paperHeight,
-                                      child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover),
+                return pw.SizedBox(
+                  width: paperWidth,
+                  height: paperHeight,
+                  child: pw.Stack(
+                    children: [
+                      pw.Positioned(
+                        left: leftOffset,
+                        top: topOffset,
+                        child: pw.SizedBox(
+                          width: paperWidth,
+                          height: paperHeight,
+                          child: _selectedTemplate != null
+                              ? pw.Stack(
+                                  children: [
+                                    if (pdfImages.isNotEmpty)
+                                      pw.Positioned(
+                                        left: _selectedTemplate!['slot1_x'] * paperWidth,
+                                        top: _selectedTemplate!['slot1_y'] * paperHeight,
+                                        child: pw.SizedBox(
+                                          width: _selectedTemplate!['slot1_w'] * paperWidth,
+                                          height: _selectedTemplate!['slot1_h'] * paperHeight,
+                                          child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover),
+                                        ),
+                                      ),
+                                    if (pdfImages.length > 1)
+                                      pw.Positioned(
+                                        left: _selectedTemplate!['slot2_x'] * paperWidth,
+                                        top: _selectedTemplate!['slot2_y'] * paperHeight,
+                                        child: pw.SizedBox(
+                                          width: _selectedTemplate!['slot2_w'] * paperWidth,
+                                          height: _selectedTemplate!['slot2_h'] * paperHeight,
+                                          child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover),
+                                        ),
+                                      ),
+                                    if (pdfImages.length > 2)
+                                      pw.Positioned(
+                                        left: _selectedTemplate!['slot3_x'] * paperWidth,
+                                        top: _selectedTemplate!['slot3_y'] * paperHeight,
+                                        child: pw.SizedBox(
+                                          width: _selectedTemplate!['slot3_w'] * paperWidth,
+                                          height: _selectedTemplate!['slot3_h'] * paperHeight,
+                                          child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover),
+                                        ),
+                                      ),
+                                    pw.Positioned.fill(
+                                      child: pw.Image(
+                                        pw.MemoryImage(_selectedTemplate!['image_data']),
+                                        fit: pw.BoxFit.fill,
+                                      ),
                                     ),
-                                  ),
-                                if (pdfImages.length > 1)
-                                  pw.Positioned(
-                                    left: _selectedTemplate!['slot2_x'] * paperWidth,
-                                    top: _selectedTemplate!['slot2_y'] * paperHeight,
-                                    child: pw.SizedBox(
-                                      width: _selectedTemplate!['slot2_w'] * paperWidth,
-                                      height: _selectedTemplate!['slot2_h'] * paperHeight,
-                                      child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover),
-                                    ),
-                                  ),
-                                if (pdfImages.length > 2)
-                                  pw.Positioned(
-                                    left: _selectedTemplate!['slot3_x'] * paperWidth,
-                                    top: _selectedTemplate!['slot3_y'] * paperHeight,
-                                    child: pw.SizedBox(
-                                      width: _selectedTemplate!['slot3_w'] * paperWidth,
-                                      height: _selectedTemplate!['slot3_h'] * paperHeight,
-                                      child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover),
-                                    ),
-                                  ),
-                                pw.Positioned.fill(
-                                  child: pw.Image(
-                                    pw.MemoryImage(_selectedTemplate!['image_data']),
-                                    fit: pw.BoxFit.fill,
+                                  ],
+                                )
+                              : pw.Center(
+                                  child: pw.Column(
+                                    mainAxisAlignment: pw.MainAxisAlignment.center,
+                                    crossAxisAlignment: pw.CrossAxisAlignment.center,
+                                    children: [
+                                      for (int i = 0; i < pdfImages.length; i++)
+                                        pw.Container(
+                                          width: 120, // Lebar foto 1:1
+                                          height: 120, // 1:1 Square
+                                          margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
+                                          decoration: pw.BoxDecoration(
+                                            border: pw.Border.all(color: PdfColors.black, width: 2),
+                                          ),
+                                          child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
+                                        ),
+                                    ],
                                   ),
                                 ),
-                              ],
-                            ),
-                          )
-                        : pw.Column(
-                            mainAxisAlignment: pw.MainAxisAlignment.start,
-                            crossAxisAlignment: pw.CrossAxisAlignment.center,
-                            children: [
-                              for (int i = 0; i < pdfImages.length; i++)
-                                pw.Container(
-                                  width: 115, // Lebar foto 1:1
-                                  height: 115, // 1:1 Square
-                                  margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
-                                  decoration: pw.BoxDecoration(
-                                    border: pw.Border.all(color: PdfColors.black, width: 2),
-                                  ),
-                                  child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
-                                ),
-                            ],
-                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -567,6 +642,15 @@ class _SessionScreenState extends State<SessionScreen> {
     // Tunggu simulasi visual sebelum selesai
     Future.delayed(const Duration(seconds: 4), () {
       if (mounted) {
+        if (_currentOrderId != null) {
+          MySqlHelper.updateSessionStatus(
+            orderId: _currentOrderId!,
+            paymentStatus: _paymentStatus,
+            sessionStatus: 'completed',
+            idTemplate: _selectedTemplate?['id_template'] as int?,
+            templateName: _selectedTemplate?['name'] as String?,
+          );
+        }
         setState(() {
           _currentStage = 'DONE';
         });
@@ -578,9 +662,11 @@ class _SessionScreenState extends State<SessionScreen> {
     _overallTimer?.cancel();
     _shotTimer?.cancel();
     _qrisPollingTimer?.cancel();
+    _isCheckingPayment = false;
   }
 
   void _resetToStart() {
+    _stopTimers();
     setState(() {
       _currentStage = 'PAYMENT';
       _selectedPrintCount = 1;
@@ -680,9 +766,9 @@ class _SessionScreenState extends State<SessionScreen> {
                 children: [
                   const Icon(Icons.qr_code_2_outlined, size: 80, color: Colors.white),
                   const SizedBox(height: 16),
-                  const Text(
-                    'QRIS PAYMENT GATEWAY',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 2),
+                  Text(
+                    '${PaymentConfig.activeGatewayName.toUpperCase()} QRIS PAYMENT',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 2),
                   ),
                   const SizedBox(height: 6),
                   const Text(
@@ -695,6 +781,7 @@ class _SessionScreenState extends State<SessionScreen> {
                   Container(
                     width: 500,
                     height: 500,
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
@@ -703,41 +790,55 @@ class _SessionScreenState extends State<SessionScreen> {
                     child: Center(
                       child: _isGeneratingQR
                           ? const CircularProgressIndicator(color: Colors.black)
-                          : _qrisUrl != null
-                              ? Image.network(
-                                  _qrisUrl!,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return const Column(
+                          : _qrisString != null && _qrisString!.isNotEmpty
+                              ? QrImageView(
+                                  data: _qrisString!,
+                                  version: QrVersions.auto,
+                                  size: 440,
+                                  backgroundColor: Colors.white,
+                                )
+                              : _qrisUrl != null
+                                  ? (_qrisUrl!.contains('generate-qr-code') || _qrisUrl!.endsWith('.png') || _qrisUrl!.endsWith('.jpg')
+                                      ? Image.network(
+                                          _qrisUrl!,
+                                          width: double.infinity,
+                                          height: double.infinity,
+                                          fit: BoxFit.contain,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return const Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(Icons.broken_image, color: Colors.black, size: 48),
+                                                SizedBox(height: 8),
+                                                Text(
+                                                  'Gagal memuat QR',
+                                                  style: TextStyle(color: Colors.black, fontSize: 11),
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        )
+                                      : QrImageView(
+                                          data: _qrisUrl!,
+                                          version: QrVersions.auto,
+                                          size: 440,
+                                          backgroundColor: Colors.white,
+                                        ))
+                                  : const Column(
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
-                                        Icon(Icons.broken_image, color: Colors.black, size: 48),
+                                        Icon(
+                                          Icons.qr_code_scanner,
+                                          size: 80,
+                                          color: Colors.black,
+                                        ),
                                         SizedBox(height: 8),
                                         Text(
-                                          'Gagal memuat QR',
-                                          style: TextStyle(color: Colors.black, fontSize: 11),
+                                          'QRIS belum dibuat',
+                                          style: TextStyle(color: Colors.black54, fontSize: 11),
                                         ),
                                       ],
-                                    );
-                                  },
-                                )
-                              : const Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.qr_code_scanner,
-                                      size: 80,
-                                      color: Colors.black,
                                     ),
-                                    SizedBox(height: 8),
-                                    Text(
-                                      'QRIS belum dibuat',
-                                      style: TextStyle(color: Colors.black54, fontSize: 11),
-                                    ),
-                                  ],
-                                ),
                     ),
                   ),
                 const SizedBox(height: 20),
@@ -1136,7 +1237,7 @@ class _SessionScreenState extends State<SessionScreen> {
     );
   }
 
-  // TAHAP 3: Memilih 3 Foto Terbaik untuk Kolase A6
+  // TAHAP 3: Memilih 3 Foto Terbaik untuk Kolase 4R
   Widget _buildSelectionStage() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1388,13 +1489,13 @@ class _SessionScreenState extends State<SessionScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'PREVIEW CETAK A6',
+                  'PREVIEW CETAK 4R',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1),
                 ),
                 const SizedBox(height: 16),
 
-                // Simulated portrait A6 vertical strip (1:1 aspect ratio layout)
+                // Simulated portrait 4R vertical strip layout
                 Expanded(
                   child: Container(
                     padding: const EdgeInsets.all(12),
@@ -1406,7 +1507,7 @@ class _SessionScreenState extends State<SessionScreen> {
                     child: _selectedTemplate != null
                         ? Center(
                             child: AspectRatio(
-                              aspectRatio: 11.5 / 14.7,
+                              aspectRatio: 102.0 / 152.0,
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   return _buildCompositePreview(constraints.maxWidth, constraints.maxHeight);
@@ -1507,7 +1608,7 @@ class _SessionScreenState extends State<SessionScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Mengirim layout A6 Portrait ke printer: ${widget.printer}',
+              'Mengirim layout 4R (102x152mm) ke printer: ${widget.printer}',
               style: const TextStyle(fontSize: 12, color: Colors.white38),
             ),
           ],
@@ -1538,7 +1639,7 @@ class _SessionScreenState extends State<SessionScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Silakan ambil hasil foto A6 Anda pada printer: ${widget.printer}',
+              'Silakan ambil hasil foto 4R Anda pada printer: ${widget.printer}',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 13, color: Colors.white54, height: 1.4),
             ),

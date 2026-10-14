@@ -1,0 +1,17 @@
+{
+  "doku": {
+    "is_production": true,
+    "client_id": "YOUR_DOKU_CLIENT_ID",
+    "secret_key": "YOUR_DOKU_SECRET_KEY",
+    "api_key": "YOUR_DOKU_API_KEY"
+  },
+  "midtrans": {
+    "is_production": false,
+    "sandbox_merchant_id": "YOUR_SANDBOX_MERCHANT_ID",
+    "sandbox_client_key": "YOUR_SANDBOX_CLIENT_KEY",
+    "sandbox_server_key": "YOUR_SANDBOX_SERVER_KEY",
+    "prod_merchant_id": "YOUR_PROD_MERCHANT_ID",
+    "prod_client_key": "YOUR_PROD_CLIENT_KEY",
+    "prod_server_key": "YOUR_PROD_SERVER_KEY"
+  }
+}

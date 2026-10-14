@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'screens/welcome_screen.dart';
 
 import 'package:window_manager/window_manager.dart';
+import 'payment_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+  await PaymentConfig.loadConfig();
   runApp(const MyApp());
 }
 
