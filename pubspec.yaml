@@ -45,6 +45,7 @@ dependencies:
   window_manager: ^0.5.2
   crypto: ^3.0.3
   qr_flutter: ^4.1.0
+  pointycastle: ^4.0.0
 
 dev_dependencies:
   flutter_test:

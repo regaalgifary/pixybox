@@ -3,7 +3,10 @@
     "is_production": true,
     "client_id": "YOUR_DOKU_CLIENT_ID",
     "secret_key": "YOUR_DOKU_SECRET_KEY",
-    "api_key": "YOUR_DOKU_API_KEY"
+    "api_key": "YOUR_DOKU_API_KEY",
+    "merchant_id": "YOUR_DOKU_MALL_ID_OR_MERCHANT_ID",
+    "terminal_id": "A01",
+    "rsa_private_key_file": "doku_rsa_private.pem"
   },
   "midtrans": {
     "is_production": false,
