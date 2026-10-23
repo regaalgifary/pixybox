@@ -71,6 +71,8 @@ class _SessionScreenState extends State<SessionScreen> {
 
   Timer? _overallTimer;
   Timer? _shotTimer;
+  Timer? _doneTimer;
+  int _doneCountdown = 15;
 
   // List menyimpan file foto asli
   List<XFile> _capturedPhotos = [];
@@ -549,89 +551,91 @@ class _SessionScreenState extends State<SessionScreen> {
           final double leftOffset = _printOffsetX * PdfPageFormat.mm;
           final double topOffset = _printOffsetY * PdfPageFormat.mm;
 
-          doc.addPage(
-            pw.Page(
-              pageFormat: pageFormat,
-              margin: pw.EdgeInsets.zero, // Zero margin agar kontrol posisi presisi
-              build: (pw.Context context) {
-                return pw.SizedBox(
-                  width: paperWidth,
-                  height: paperHeight,
-                  child: pw.Stack(
-                    children: [
-                      pw.Positioned(
-                        left: leftOffset,
-                        top: topOffset,
-                        child: pw.SizedBox(
-                          width: paperWidth,
-                          height: paperHeight,
-                          child: _selectedTemplate != null
-                              ? pw.Stack(
-                                  children: [
-                                    if (pdfImages.isNotEmpty)
-                                      pw.Positioned(
-                                        left: _selectedTemplate!['slot1_x'] * paperWidth,
-                                        top: _selectedTemplate!['slot1_y'] * paperHeight,
-                                        child: pw.SizedBox(
-                                          width: _selectedTemplate!['slot1_w'] * paperWidth,
-                                          height: _selectedTemplate!['slot1_h'] * paperHeight,
-                                          child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover),
-                                        ),
-                                      ),
-                                    if (pdfImages.length > 1)
-                                      pw.Positioned(
-                                        left: _selectedTemplate!['slot2_x'] * paperWidth,
-                                        top: _selectedTemplate!['slot2_y'] * paperHeight,
-                                        child: pw.SizedBox(
-                                          width: _selectedTemplate!['slot2_w'] * paperWidth,
-                                          height: _selectedTemplate!['slot2_h'] * paperHeight,
-                                          child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover),
-                                        ),
-                                      ),
-                                    if (pdfImages.length > 2)
-                                      pw.Positioned(
-                                        left: _selectedTemplate!['slot3_x'] * paperWidth,
-                                        top: _selectedTemplate!['slot3_y'] * paperHeight,
-                                        child: pw.SizedBox(
-                                          width: _selectedTemplate!['slot3_w'] * paperWidth,
-                                          height: _selectedTemplate!['slot3_h'] * paperHeight,
-                                          child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover),
-                                        ),
-                                      ),
-                                    pw.Positioned.fill(
-                                      child: pw.Image(
-                                        pw.MemoryImage(_selectedTemplate!['image_data']),
-                                        fit: pw.BoxFit.fill,
-                                      ),
-                                    ),
-                                  ],
-                                )
-                              : pw.Center(
-                                  child: pw.Column(
-                                    mainAxisAlignment: pw.MainAxisAlignment.center,
-                                    crossAxisAlignment: pw.CrossAxisAlignment.center,
+          for (int copy = 0; copy < _selectedPrintCount; copy++) {
+            doc.addPage(
+              pw.Page(
+                pageFormat: pageFormat,
+                margin: pw.EdgeInsets.zero, // Zero margin agar kontrol posisi presisi
+                build: (pw.Context context) {
+                  return pw.SizedBox(
+                    width: paperWidth,
+                    height: paperHeight,
+                    child: pw.Stack(
+                      children: [
+                        pw.Positioned(
+                          left: leftOffset,
+                          top: topOffset,
+                          child: pw.SizedBox(
+                            width: paperWidth,
+                            height: paperHeight,
+                            child: _selectedTemplate != null
+                                ? pw.Stack(
                                     children: [
-                                      for (int i = 0; i < pdfImages.length; i++)
-                                        pw.Container(
-                                          width: 120, // Lebar foto 1:1
-                                          height: 120, // 1:1 Square
-                                          margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
-                                          decoration: pw.BoxDecoration(
-                                            border: pw.Border.all(color: PdfColors.black, width: 2),
+                                      if (pdfImages.isNotEmpty)
+                                        pw.Positioned(
+                                          left: _selectedTemplate!['slot1_x'] * paperWidth,
+                                          top: _selectedTemplate!['slot1_y'] * paperHeight,
+                                          child: pw.SizedBox(
+                                            width: _selectedTemplate!['slot1_w'] * paperWidth,
+                                            height: _selectedTemplate!['slot1_h'] * paperHeight,
+                                            child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover),
                                           ),
-                                          child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
                                         ),
+                                      if (pdfImages.length > 1)
+                                        pw.Positioned(
+                                          left: _selectedTemplate!['slot2_x'] * paperWidth,
+                                          top: _selectedTemplate!['slot2_y'] * paperHeight,
+                                          child: pw.SizedBox(
+                                            width: _selectedTemplate!['slot2_w'] * paperWidth,
+                                            height: _selectedTemplate!['slot2_h'] * paperHeight,
+                                            child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover),
+                                          ),
+                                        ),
+                                      if (pdfImages.length > 2)
+                                        pw.Positioned(
+                                          left: _selectedTemplate!['slot3_x'] * paperWidth,
+                                          top: _selectedTemplate!['slot3_y'] * paperHeight,
+                                          child: pw.SizedBox(
+                                            width: _selectedTemplate!['slot3_w'] * paperWidth,
+                                            height: _selectedTemplate!['slot3_h'] * paperHeight,
+                                            child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover),
+                                          ),
+                                        ),
+                                      pw.Positioned.fill(
+                                        child: pw.Image(
+                                          pw.MemoryImage(_selectedTemplate!['image_data']),
+                                          fit: pw.BoxFit.fill,
+                                        ),
+                                      ),
                                     ],
+                                  )
+                                : pw.Center(
+                                    child: pw.Column(
+                                      mainAxisAlignment: pw.MainAxisAlignment.center,
+                                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                                      children: [
+                                        for (int i = 0; i < pdfImages.length; i++)
+                                          pw.Container(
+                                            width: 120, // Lebar foto 1:1
+                                            height: 120, // 1:1 Square
+                                            margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
+                                            decoration: pw.BoxDecoration(
+                                              border: pw.Border.all(color: PdfColors.black, width: 2),
+                                            ),
+                                            child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
+                                          ),
+                                      ],
+                                    ),
                                   ),
-                                ),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          );
+                      ],
+                    ),
+                  );
+                },
+              ),
+            );
+          }
           return doc.save();
         },
       );
@@ -653,7 +657,27 @@ class _SessionScreenState extends State<SessionScreen> {
         }
         setState(() {
           _currentStage = 'DONE';
+          _doneCountdown = 15;
         });
+        _startDoneTimer();
+      }
+    });
+  }
+
+  void _startDoneTimer() {
+    _doneTimer?.cancel();
+    _doneTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _currentStage != 'DONE') {
+        timer.cancel();
+        return;
+      }
+      if (_doneCountdown > 1) {
+        setState(() {
+          _doneCountdown--;
+        });
+      } else {
+        timer.cancel();
+        _resetToStart();
       }
     });
   }
@@ -662,16 +686,42 @@ class _SessionScreenState extends State<SessionScreen> {
     _overallTimer?.cancel();
     _shotTimer?.cancel();
     _qrisPollingTimer?.cancel();
+    _doneTimer?.cancel();
     _isCheckingPayment = false;
   }
 
   void _resetToStart() {
     _stopTimers();
+
+    // Hapus file foto sementara dari sesi sebelumnya
+    for (var photo in _capturedPhotos) {
+      try {
+        final f = File(photo.path);
+        if (f.existsSync()) {
+          f.deleteSync();
+        }
+      } catch (_) {}
+    }
+
     setState(() {
       _currentStage = 'PAYMENT';
       _selectedPrintCount = 1;
-      _updatePrice();
+      _paymentStatus = 'pending';
+      _qrisUrl = null;
+      _qrisString = null;
+      _currentOrderId = null;
+      _isGeneratingQR = true;
+      _capturedPhotos.clear();
+      _selectedPhotosIndices.clear();
+      _takenPhotosCount = 0;
+      _hasStartedShooting = false;
+      _overallTimeRemaining = 120;
+      _shotCountdown = 10;
+      _isFlashActive = false;
     });
+
+    _updatePrice();
+    _generateQrisPayment();
   }
 
   Future<void> _goBack() async {
@@ -856,6 +906,22 @@ class _SessionScreenState extends State<SessionScreen> {
                         : Colors.white70,
                   ),
                 ),
+                if (!_isGeneratingQR && (_qrisUrl == null && _qrisString == null || _paymentStatus == 'expire' || _paymentStatus == 'cancel')) ...[
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _generateQrisPayment,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Generate Ulang QRIS'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white12,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1654,7 +1720,15 @@ class _SessionScreenState extends State<SessionScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text('MULAI SESI BARU', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: Text(
+                'MULAI SESI BARU ($_doneCountdown s)',
+                style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Otomatis kembali ke pembayaran sesi baru saat hitung mundur selesai',
+              style: TextStyle(fontSize: 11, color: Colors.white38),
             ),
           ],
         ),
