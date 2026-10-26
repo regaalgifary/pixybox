@@ -13,6 +13,7 @@ import '../mysql_helper.dart';
 import '../midtrans_service.dart';
 import '../doku_service.dart';
 import '../payment_config.dart';
+import 'package:window_manager/window_manager.dart';
 
 class SessionScreen extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -65,7 +66,7 @@ class _SessionScreenState extends State<SessionScreen> {
   // State Pengambilan Foto
   bool _hasStartedShooting = false; 
   int _overallTimeRemaining = 120; // 2 menit
-  int _shotCountdown = 10; // 10 detik per foto
+  int _shotCountdown = 5; // 5 detik per foto
   int _takenPhotosCount = 0; // Target 5 foto
   bool _isFlashActive = false;
 
@@ -84,6 +85,7 @@ class _SessionScreenState extends State<SessionScreen> {
   @override
   void initState() {
     super.initState();
+    windowManager.setFullScreen(true);
     _loadCalibrationSettings();
     _fetchPricing();
     _initCamera();
@@ -152,6 +154,9 @@ class _SessionScreenState extends State<SessionScreen> {
 
     setState(() {
       _priceList = prices;
+      if (prices.isNotEmpty && !prices.any((p) => p['print_count'] == _selectedPrintCount)) {
+        _selectedPrintCount = prices.first['print_count'] as int;
+      }
       _updatePrice();
       _isLoadingPrice = false;
     });
@@ -394,7 +399,7 @@ class _SessionScreenState extends State<SessionScreen> {
       _currentStage = 'SHOOTING';
       _hasStartedShooting = false;
       _overallTimeRemaining = 120;
-      _shotCountdown = 10;
+      _shotCountdown = 5;
       _takenPhotosCount = 0;
       _capturedPhotos.clear();
       _selectedPhotosIndices.clear();
@@ -423,7 +428,7 @@ class _SessionScreenState extends State<SessionScreen> {
 
   void _startNextShotTimer() {
     setState(() {
-      _shotCountdown = 10; // 10 detik per foto
+      _shotCountdown = 5; // 5 detik per foto
     });
 
     _shotTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -539,17 +544,40 @@ class _SessionScreenState extends State<SessionScreen> {
       await Printing.directPrintPdf(
         printer: targetPrinter,
         format: pageFormat4R,
+        usePrinterSettings: true,
         onLayout: (PdfPageFormat format) async {
           debugPrint('Printer layout format: $format');
           
           final doc = pw.Document();
-          final pageFormat = pageFormat4R;
+          
+          // 1. Tentukan pageFormat kanvas PDF
+          // Gunakan format dari driver printer jika tersedia agar ukuran DC di Windows sesuai
+          final pageFormat = (format.width > 0 && format.height > 0) ? format : pageFormat4R;
 
-          final double paperWidth = 102.0 * PdfPageFormat.mm; // ~289.13 pt
-          final double paperHeight = 152.0 * PdfPageFormat.mm; // ~430.87 pt
+          // 2. Dimensi foto 4R standar: 101.6 mm x 152.4 mm (4 x 6 inch)
+          final double photo4RWidth = 101.6 * PdfPageFormat.mm;
+          final double photo4RHeight = 152.4 * PdfPageFormat.mm;
 
-          final double leftOffset = _printOffsetX * PdfPageFormat.mm;
-          final double topOffset = _printOffsetY * PdfPageFormat.mm;
+          // 3. Hitung base X dan Y untuk penempatan di baki printer
+          // Jika driver printer berada pada kanvas A4 / Letter (lebar > 130 mm):
+          // - Printer Canon (seperti Canon G1010): baki memasukkan kertas di TENGAH (center feed).
+          //   Sehingga foto 4R harus diposisikan di tengah bidang A4: (pageFormat.width - photo4RWidth) / 2
+          // - Printer Epson: baki kertas menempel di KANAN (right feed): pageFormat.width - photo4RWidth
+          // - Jika driver sudah disetel ke 4R (lebar <= 130 mm): baseX = 0
+          double baseX = 0.0;
+          double baseY = 0.0;
+          if (pageFormat.width > 130.0 * PdfPageFormat.mm) {
+            final isEpson = targetPrinter?.name.toLowerCase().contains('epson') ?? false;
+            if (isEpson) {
+              baseX = pageFormat.width - photo4RWidth;
+            } else {
+              // Canon (G1010), HP, atau printer umum lainnya dengan center paper feed
+              baseX = (pageFormat.width - photo4RWidth) / 2.0;
+            }
+          }
+
+          final double leftOffset = baseX + (_printOffsetX * PdfPageFormat.mm);
+          final double topOffset = baseY + (_printOffsetY * PdfPageFormat.mm);
 
           for (int copy = 0; copy < _selectedPrintCount; copy++) {
             doc.addPage(
@@ -557,80 +585,76 @@ class _SessionScreenState extends State<SessionScreen> {
                 pageFormat: pageFormat,
                 margin: pw.EdgeInsets.zero, // Zero margin agar kontrol posisi presisi
                 build: (pw.Context context) {
-                  return pw.SizedBox(
-                    width: paperWidth,
-                    height: paperHeight,
-                    child: pw.Stack(
-                      children: [
-                        pw.Positioned(
-                          left: leftOffset,
-                          top: topOffset,
-                          child: pw.SizedBox(
-                            width: paperWidth,
-                            height: paperHeight,
-                            child: _selectedTemplate != null
-                                ? pw.Stack(
-                                    children: [
-                                      if (pdfImages.isNotEmpty)
-                                        pw.Positioned(
-                                          left: _selectedTemplate!['slot1_x'] * paperWidth,
-                                          top: _selectedTemplate!['slot1_y'] * paperHeight,
-                                          child: pw.SizedBox(
-                                            width: _selectedTemplate!['slot1_w'] * paperWidth,
-                                            height: _selectedTemplate!['slot1_h'] * paperHeight,
-                                            child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover),
-                                          ),
-                                        ),
-                                      if (pdfImages.length > 1)
-                                        pw.Positioned(
-                                          left: _selectedTemplate!['slot2_x'] * paperWidth,
-                                          top: _selectedTemplate!['slot2_y'] * paperHeight,
-                                          child: pw.SizedBox(
-                                            width: _selectedTemplate!['slot2_w'] * paperWidth,
-                                            height: _selectedTemplate!['slot2_h'] * paperHeight,
-                                            child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover),
-                                          ),
-                                        ),
-                                      if (pdfImages.length > 2)
-                                        pw.Positioned(
-                                          left: _selectedTemplate!['slot3_x'] * paperWidth,
-                                          top: _selectedTemplate!['slot3_y'] * paperHeight,
-                                          child: pw.SizedBox(
-                                            width: _selectedTemplate!['slot3_w'] * paperWidth,
-                                            height: _selectedTemplate!['slot3_h'] * paperHeight,
-                                            child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover),
-                                          ),
-                                        ),
-                                      pw.Positioned.fill(
-                                        child: pw.Image(
-                                          pw.MemoryImage(_selectedTemplate!['image_data']),
-                                          fit: pw.BoxFit.fill,
+                  return pw.Stack(
+                    children: [
+                      pw.Positioned(
+                        left: leftOffset,
+                        top: topOffset,
+                        child: pw.SizedBox(
+                          width: photo4RWidth,
+                          height: photo4RHeight,
+                          child: _selectedTemplate != null
+                              ? pw.Stack(
+                                  children: [
+                                    if (pdfImages.isNotEmpty)
+                                      pw.Positioned(
+                                        left: _selectedTemplate!['slot1_x'] * photo4RWidth,
+                                        top: _selectedTemplate!['slot1_y'] * photo4RHeight,
+                                        child: pw.SizedBox(
+                                          width: _selectedTemplate!['slot1_w'] * photo4RWidth,
+                                          height: _selectedTemplate!['slot1_h'] * photo4RHeight,
+                                          child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover),
                                         ),
                                       ),
-                                    ],
-                                  )
-                                : pw.Center(
-                                    child: pw.Column(
-                                      mainAxisAlignment: pw.MainAxisAlignment.center,
-                                      crossAxisAlignment: pw.CrossAxisAlignment.center,
-                                      children: [
-                                        for (int i = 0; i < pdfImages.length; i++)
-                                          pw.Container(
-                                            width: 120, // Lebar foto 1:1
-                                            height: 120, // 1:1 Square
-                                            margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
-                                            decoration: pw.BoxDecoration(
-                                              border: pw.Border.all(color: PdfColors.black, width: 2),
-                                            ),
-                                            child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
-                                          ),
-                                      ],
+                                    if (pdfImages.length > 1)
+                                      pw.Positioned(
+                                        left: _selectedTemplate!['slot2_x'] * photo4RWidth,
+                                        top: _selectedTemplate!['slot2_y'] * photo4RHeight,
+                                        child: pw.SizedBox(
+                                          width: _selectedTemplate!['slot2_w'] * photo4RWidth,
+                                          height: _selectedTemplate!['slot2_h'] * photo4RHeight,
+                                          child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover),
+                                        ),
+                                      ),
+                                    if (pdfImages.length > 2)
+                                      pw.Positioned(
+                                        left: _selectedTemplate!['slot3_x'] * photo4RWidth,
+                                        top: _selectedTemplate!['slot3_y'] * photo4RHeight,
+                                        child: pw.SizedBox(
+                                          width: _selectedTemplate!['slot3_w'] * photo4RWidth,
+                                          height: _selectedTemplate!['slot3_h'] * photo4RHeight,
+                                          child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover),
+                                        ),
+                                      ),
+                                    pw.Positioned.fill(
+                                      child: pw.Image(
+                                        pw.MemoryImage(_selectedTemplate!['image_data']),
+                                        fit: pw.BoxFit.fill,
+                                      ),
                                     ),
+                                  ],
+                                )
+                              : pw.Center(
+                                  child: pw.Column(
+                                    mainAxisAlignment: pw.MainAxisAlignment.center,
+                                    crossAxisAlignment: pw.CrossAxisAlignment.center,
+                                    children: [
+                                      for (int i = 0; i < pdfImages.length; i++)
+                                        pw.Container(
+                                          width: 120, // Lebar foto 1:1
+                                          height: 120, // 1:1 Square
+                                          margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
+                                          decoration: pw.BoxDecoration(
+                                            border: pw.Border.all(color: PdfColors.black, width: 2),
+                                          ),
+                                          child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
+                                        ),
+                                    ],
                                   ),
-                          ),
+                                ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   );
                 },
               ),
@@ -716,7 +740,7 @@ class _SessionScreenState extends State<SessionScreen> {
       _takenPhotosCount = 0;
       _hasStartedShooting = false;
       _overallTimeRemaining = 120;
-      _shotCountdown = 10;
+      _shotCountdown = 5;
       _isFlashActive = false;
     });
 
@@ -744,33 +768,34 @@ class _SessionScreenState extends State<SessionScreen> {
   @override
   Widget build(BuildContext context) {
     final String formattedPrice = 'Rp ${_price.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}';
+    final bool isShootingStage = _currentStage == 'SHOOTING';
 
     return Scaffold(
       backgroundColor: const Color(0xFF0F0F0F),
-      appBar: AppBar(
-        title: Text(
-          _currentStage == 'PAYMENT'
-              ? 'TAHAP 1: PEMBAYARAN & CETAK'
-              : _currentStage == 'SHOOTING'
-                  ? 'TAHAP 2: AMBIL FOTO'
-                  : _currentStage == 'SELECTION'
-                      ? 'TAHAP 3: PILIH 3 FOTO ANDALAN'
-                      : _currentStage == 'PRINTING'
-                          ? 'TAHAP 4: MENCETAK'
-                          : 'SESI SELESAI',
-          style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 1),
-        ),
-        backgroundColor: const Color(0xFF161616),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: (_currentStage == 'PAYMENT') ? _goBack : null,
-        ),
-      ),
+      appBar: isShootingStage
+          ? null
+          : AppBar(
+              title: Text(
+                _currentStage == 'PAYMENT'
+                    ? 'TAHAP 1: PEMBAYARAN & CETAK'
+                    : _currentStage == 'SELECTION'
+                        ? 'TAHAP 3: PILIH 3 FOTO ANDALAN'
+                        : _currentStage == 'PRINTING'
+                            ? 'TAHAP 4: MENCETAK'
+                            : 'SESI SELESAI',
+                style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 1),
+              ),
+              backgroundColor: const Color(0xFF161616),
+              elevation: 0,
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: (_currentStage == 'PAYMENT') ? _goBack : null,
+              ),
+            ),
       body: Container(
         color: const Color(0xFF0F0F0F),
         child: Padding(
-          padding: const EdgeInsets.all(28),
+          padding: isShootingStage ? EdgeInsets.zero : const EdgeInsets.all(28),
           child: _buildStageContent(formattedPrice),
         ),
       ),
@@ -967,11 +992,22 @@ class _SessionScreenState extends State<SessionScreen> {
                 ),
                 const SizedBox(height: 12),
                 Row(
-                  children: [
-                    Expanded(child: _buildPrintCountOption(1, '1x Cetak')),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildPrintCountOption(2, '2x Cetak')),
-                  ],
+                  children: _priceList.isNotEmpty
+                      ? _priceList.map((item) {
+                          final count = item['print_count'] as int;
+                          final label = item['label'] as String? ?? '${count}x Cetak';
+                          return Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                              child: _buildPrintCountOption(count, label),
+                            ),
+                          );
+                        }).toList()
+                      : [
+                          Expanded(child: _buildPrintCountOption(1, '1x Cetak')),
+                          const SizedBox(width: 12),
+                          Expanded(child: _buildPrintCountOption(2, '2x Cetak')),
+                        ],
                 ),
 
                 const SizedBox(height: 32),
@@ -1032,273 +1068,358 @@ class _SessionScreenState extends State<SessionScreen> {
     );
   }
 
-  // TAHAP 2: Kamera View & Ambil Foto
+  // TAHAP 2: Kamera View & Ambil Foto (FULLSCREEN PHOTOBOOTH EXPERIENCE)
   Widget _buildShootingStage() {
     final String minutes = (_overallTimeRemaining ~/ 60).toString().padLeft(2, '0');
     final String seconds = (_overallTimeRemaining % 60).toString().padLeft(2, '0');
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        // Camera View (Left side)
-        Expanded(
-          flex: 3,
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white24, width: 1.5),
+        // 1. Fullscreen Camera Preview (Mirrored for natural mirror experience)
+        if (_isCameraInitialized && _cameraController != null)
+          SizedBox.expand(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              alignment: Alignment.center,
+              child: SizedBox(
+                width: 1000 * _cameraController!.value.aspectRatio,
+                height: 1000,
+                child: Transform.scale(
+                  scaleX: -1, // Horizontal mirror
+                  child: CameraPreview(_cameraController!),
+                ),
+              ),
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(22),
-              child: Stack(
-                fit: StackFit.expand,
+          )
+        else
+          Container(
+            color: const Color(0xFF0F0F0F),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _isCameraInitialized && _cameraController != null
-                      ? Center(
-                          child: AspectRatio(
-                            aspectRatio: 1.0,
-                            child: ClipRect(
-                              child: FittedBox(
-                                fit: BoxFit.cover,
-                                alignment: Alignment.center,
-                                child: Container(
-                                  width: 400,
-                                  height: 400 / _cameraController!.value.aspectRatio,
-                                  child: CameraPreview(_cameraController!),
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                      : Container(
-                          color: const Color(0xFF0F0F0F),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.videocam_off_outlined, size: 70, color: Colors.white.withAlpha(30)),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  'MENGHUBUNGKAN KE CAMERA...',
-                                  style: TextStyle(color: Colors.white30, fontSize: 13),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-
-                  if (!_hasStartedShooting)
-                    Positioned.fill(
-                      child: Container(
-                        color: Colors.black54,
-                        child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.all(32),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF161616),
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(color: Colors.white24),
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text(
-                                  'KAMERA SIAP!',
-                                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 2),
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Sesi foto 5 kali dengan interval 10 detik per foto.',
-                                  style: TextStyle(fontSize: 13, color: Colors.white54),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 32),
-                                ElevatedButton.icon(
-                                  onPressed: _startShootingFlow,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: Colors.black,
-                                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                  ),
-                                  icon: const Icon(Icons.play_arrow, size: 24),
-                                  label: const Text(
-                                    'MULAI BERGAYA & FOTO',
-                                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  if (_hasStartedShooting)
-                    Positioned(
-                      top: 24,
-                      left: 24,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withAlpha(200),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white24),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.timer_outlined, color: Colors.white, size: 16),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Sisa Waktu Sesi: $minutes:$seconds',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                  if (_hasStartedShooting)
-                    Center(
-                      child: Container(
-                        width: 130,
-                        height: 130,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withAlpha(180),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white38, width: 3),
-                        ),
-                        child: Center(
-                          child: Text(
-                            '$_shotCountdown',
-                            style: const TextStyle(fontSize: 64, fontWeight: FontWeight.w900, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                  if (_isFlashActive)
-                    Positioned.fill(
-                      child: Container(
-                        color: Colors.white,
-                        child: const Center(
-                          child: Icon(Icons.flash_on, size: 100, color: Colors.black),
-                        ),
-                      ),
-                    ),
+                  Icon(Icons.videocam_off_outlined, size: 70, color: Colors.white.withAlpha(30)),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'MENGHUBUNGKAN KE KAMERA...',
+                    style: TextStyle(color: Colors.white30, fontSize: 13, letterSpacing: 1),
+                  ),
                 ],
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 28),
 
-        // Photo Grid / Result (Right side)
-        Expanded(
-          flex: 2,
+        // 2. Floating Top HUD Bar (Timer & Shot Progress)
+        Positioned(
+          top: 24,
+          left: 24,
+          right: 24,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Session Timer Pill
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black.withAlpha(190),
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(color: Colors.white24, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(120),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.timer_outlined, color: Colors.amberAccent, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Sisa Waktu: $minutes:$seconds',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Photo Progress Badge & Indicator Dots
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black.withAlpha(190),
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(color: Colors.white24, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(120),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.camera_alt_outlined, color: Colors.white70, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Foto ${_takenPhotosCount + (_hasStartedShooting && _takenPhotosCount < 5 ? 1 : 0)} / 5',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    for (int i = 0; i < 5; i++)
+                      Container(
+                        width: 9,
+                        height: 9,
+                        margin: const EdgeInsets.only(left: 4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: i < _takenPhotosCount
+                              ? Colors.greenAccent
+                              : (i == _takenPhotosCount && _hasStartedShooting)
+                                  ? Colors.white
+                                  : Colors.white24,
+                          boxShadow: i < _takenPhotosCount
+                              ? [BoxShadow(color: Colors.greenAccent.withAlpha(180), blurRadius: 6)]
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 3. Floating Thumbnail Sidebar (Right side, showing recent shots)
+        Positioned(
+          top: 86,
+          right: 24,
+          bottom: 24,
           child: Container(
-            padding: const EdgeInsets.all(24),
+            width: 96,
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: const Color(0xFF161616),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white12),
+              color: Colors.black.withAlpha(160),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white12, width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(130),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6),
+                ),
+              ],
             ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'HASIL FOTO JEPRETAN',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1.5),
+                  'JEPRETAN',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white60,
+                    letterSpacing: 1.5,
+                  ),
                 ),
-                const SizedBox(height: 16),
-                
+                const SizedBox(height: 6),
                 Expanded(
-                  child: GridView.builder(
+                  child: ListView.builder(
                     itemCount: 5,
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 0.8,
-                    ),
+                    physics: const NeverScrollableScrollPhysics(),
                     itemBuilder: (context, index) {
                       final bool isTaken = _capturedPhotos.length > index;
                       final bool isCurrent = _takenPhotosCount == index && _hasStartedShooting;
-                      
-                      if (isTaken) {
-                        final XFile file = _capturedPhotos[index];
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white, width: 1.5),
+
+                      return Container(
+                        height: 88,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isCurrent
+                                ? Colors.white
+                                : (isTaken ? Colors.greenAccent.withAlpha(180) : Colors.white12),
+                            width: isCurrent ? 2.5 : 1,
                           ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10.5),
-                            child: file.path.isNotEmpty
-                                ? Transform.scale(
-                                    scaleX: -1,
-                                    child: Image.file(
-                                      File(file.path),
-                                      fit: BoxFit.cover,
-                                    ),
-                                  )
-                                : const Center(child: Icon(Icons.broken_image, color: Colors.white30)),
-                          ),
-                        );
-                      } else {
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: isCurrent ? Colors.white : Colors.white24,
-                              width: isCurrent ? 2 : 1,
-                            ),
-                          ),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  isCurrent ? Icons.videocam_rounded : Icons.photo_outlined,
-                                  color: isCurrent ? Colors.white : Colors.white12,
-                                  size: 28,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  isCurrent ? 'MEMBIDIK' : 'FOTO ${index + 1}',
-                                  style: TextStyle(
-                                    color: isCurrent ? Colors.white : Colors.white12,
-                                    fontSize: 11,
-                                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                          boxShadow: isCurrent
+                              ? [BoxShadow(color: Colors.white.withAlpha(90), blurRadius: 10)]
+                              : null,
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8.5),
+                          child: isTaken
+                              ? (_capturedPhotos[index].path.isNotEmpty
+                                  ? Transform.scale(
+                                      scaleX: -1,
+                                      child: Image.file(
+                                        File(_capturedPhotos[index].path),
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        height: double.infinity,
+                                      ),
+                                    )
+                                  : const Center(
+                                      child: Icon(Icons.broken_image, color: Colors.white24, size: 20),
+                                    ))
+                              : Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        isCurrent ? Icons.videocam_rounded : Icons.camera_alt_outlined,
+                                        color: isCurrent ? Colors.white : Colors.white24,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        isCurrent ? 'FOTO...' : '#${index + 1}',
+                                        style: TextStyle(
+                                          color: isCurrent ? Colors.white : Colors.white24,
+                                          fontSize: 10,
+                                          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
+                        ),
+                      );
                     },
                   ),
-                ),
-
-                const SizedBox(height: 12),
-                Text(
-                  _hasStartedShooting 
-                      ? 'Proses: $_takenPhotosCount dari 5 Foto Terkumpul' 
-                      : 'Menunggu Sesi Pengambilan Foto Dimulai...',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
           ),
         ),
+
+        // 4. Center Countdown Overlay
+        if (_hasStartedShooting)
+          Center(
+            child: Container(
+              width: 170,
+              height: 170,
+              decoration: BoxDecoration(
+                color: Colors.black.withAlpha(190),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: _shotCountdown <= 3 ? Colors.amberAccent : Colors.white,
+                  width: 4,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (_shotCountdown <= 3 ? Colors.amberAccent : Colors.white).withAlpha(100),
+                    blurRadius: 36,
+                    spreadRadius: 6,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  '$_shotCountdown',
+                  style: TextStyle(
+                    fontSize: 90,
+                    fontWeight: FontWeight.w900,
+                    color: _shotCountdown <= 3 ? Colors.amberAccent : Colors.white,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        // 5. Fullscreen Flash Animation
+        if (_isFlashActive)
+          Positioned.fill(
+            child: Container(
+              color: Colors.white,
+              child: const Center(
+                child: Icon(Icons.flash_on, size: 120, color: Colors.black),
+              ),
+            ),
+          ),
+
+        // 6. Pre-Shooting Welcome Card
+        if (!_hasStartedShooting)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withAlpha(130),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 52, vertical: 40),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161616).withAlpha(245),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: Colors.white24, width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withAlpha(180),
+                        blurRadius: 36,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withAlpha(15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.camera_alt, size: 52, color: Colors.white),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'KAMERA SIAP!',
+                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 2),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Sesi 5 foto otomatis dengan interval 5 detik per foto.\nBersiaplah dan tunjukkan pose terbaikmu!',
+                        style: TextStyle(fontSize: 14, color: Colors.white70, height: 1.5),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 36),
+                      ElevatedButton.icon(
+                        onPressed: _startShootingFlow,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 22),
+                          elevation: 12,
+                          shadowColor: Colors.white.withAlpha(90),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                        ),
+                        icon: const Icon(Icons.play_arrow_rounded, size: 30),
+                        label: const Text(
+                          'MULAI BERGAYA & FOTO',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 1),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }

@@ -49,4 +49,5 @@ payment_keys.json
 payment_config.json
 print_calibration.json
 *.pem
+*.db
 

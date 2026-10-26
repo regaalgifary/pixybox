@@ -51,7 +51,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } else {
       setState(() {
-        _errorMessage = 'Username atau Password salah / Gagal terhubung ke MySQL';
+        _errorMessage = 'Username atau Password salah';
       });
     }
   }
@@ -222,6 +222,37 @@ class _LoginScreenState extends State<LoginScreen> {
                               letterSpacing: 1.2,
                             ),
                           ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(8),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Info Akun Lokal (Default):',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          '• Admin: admin_pixy  |  Pass: admin123\n• Booth: photobox_01  |  Pass: password123',
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 11,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),

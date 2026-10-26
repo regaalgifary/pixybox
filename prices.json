@@ -1,0 +1,40 @@
+{
+  "prices": [
+    {
+      "print_count": 1,
+      "price": 1000,
+      "label": "1x Cetak"
+    },
+    {
+      "print_count": 2,
+      "price": 2000,
+      "label": "2x Cetak"
+    }
+  ],
+  "booth_prices": {
+    "1": [
+      {
+        "print_count": 1,
+        "price": 1000,
+        "label": "1x Cetak"
+      },
+      {
+        "print_count": 2,
+        "price": 2000,
+        "label": "2x Cetak"
+      }
+    ],
+    "2": [
+      {
+        "print_count": 1,
+        "price": 1000,
+        "label": "1x Cetak"
+      },
+      {
+        "print_count": 2,
+        "price": 2000,
+        "label": "2x Cetak"
+      }
+    ]
+  }
+}
