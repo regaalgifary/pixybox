@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
-import 'package:image/image.dart' as img;
 
 /// Helper Koneksi Database MySQL Online (http://pixyboxstudio.biz.id)
 /// Seluruh data (users, prices, templates, template_assignments, session_histories)
@@ -65,73 +64,7 @@ class MySqlHelper {
     return null;
   }
 
-  /// Membuat gambar PNG template default HD (1200x1800) di memori bila database online belum memiliki template
-  static Uint8List _generateDefaultTemplatePng() {
-    try {
-      const int width = 1200;
-      const int height = 1800;
-      final image = img.Image(width: width, height: height, numChannels: 4);
-
-      for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-          bool inSlot1 = (x >= 90 && x <= 1110 && y >= 100 && y <= 560);
-          bool inSlot2 = (x >= 90 && x <= 1110 && y >= 600 && y <= 1060);
-          bool inSlot3 = (x >= 90 && x <= 1110 && y >= 1100 && y <= 1560);
-
-          if (inSlot1 || inSlot2 || inSlot3) {
-            image.setPixelRgba(x, y, 0, 0, 0, 0);
-          } else {
-            image.setPixelRgba(x, y, 211, 36, 43, 255);
-          }
-        }
-      }
-
-      img.drawRect(
-        image,
-        x1: 25,
-        y1: 25,
-        x2: width - 26,
-        y2: height - 26,
-        color: img.ColorRgba8(255, 255, 255, 255),
-        thickness: 6,
-      );
-
-      img.drawRect(
-        image,
-        x1: 90,
-        y1: 100,
-        x2: 1110,
-        y2: 560,
-        color: img.ColorRgba8(255, 255, 255, 180),
-        thickness: 3,
-      );
-      img.drawRect(
-        image,
-        x1: 90,
-        y1: 600,
-        x2: 1110,
-        y2: 1060,
-        color: img.ColorRgba8(255, 255, 255, 180),
-        thickness: 3,
-      );
-      img.drawRect(
-        image,
-        x1: 90,
-        y1: 1100,
-        x2: 1110,
-        y2: 1560,
-        color: img.ColorRgba8(255, 255, 255, 180),
-        thickness: 3,
-      );
-
-      return Uint8List.fromList(img.encodePng(image));
-    } catch (e) {
-      debugPrint('Error membuat default template PNG: $e');
-      return Uint8List(0);
-    }
-  }
-
-  /// Inisialisasi & migrasi otomatis skema database + seed data awal di server `pixyboxstudio.biz.id`
+  /// Inisialisasi & migrasi otomatis skema database di server `pixyboxstudio.biz.id`
   static Future<void> initRemoteDatabase() async {
     try {
       final response = await _client
@@ -144,57 +77,6 @@ class MySqlHelper {
       if (response.statusCode == 200) {
         debugPrint(
             'Database online pixyboxstudio.biz.id siap: ${response.body}');
-      }
-
-      // Pastikan template default tersedia di database online jika tabel templates masih kosong
-      final remoteTemplatesResp = await _postAction('get_templates', {
-        'id_user': 3,
-        'role': 'admin',
-      });
-      if (remoteTemplatesResp != null &&
-          remoteTemplatesResp['success'] == true) {
-        final List<dynamic> remoteList =
-            remoteTemplatesResp['templates'] as List<dynamic>? ?? [];
-        if (remoteList.isEmpty) {
-          final imgBytes = _generateDefaultTemplatePng();
-          if (imgBytes.isNotEmpty) {
-            await _postAction(
-              'save_template',
-              {
-                'id_user': 3,
-                'name': 'Classic 3-Strip Pixybox',
-                'image_base64': base64Encode(imgBytes),
-                'template_mode': '4r',
-                'slot1_x': 0.075,
-                'slot1_y': 0.055,
-                'slot1_w': 0.85,
-                'slot1_h': 0.255,
-                'slot2_x': 0.075,
-                'slot2_y': 0.333,
-                'slot2_w': 0.85,
-                'slot2_h': 0.255,
-                'slot3_x': 0.075,
-                'slot3_y': 0.611,
-                'slot3_w': 0.85,
-                'slot3_h': 0.255,
-                'slot4_x': 0.575,
-                'slot4_y': 0.055,
-                'slot4_w': 0.85,
-                'slot4_h': 0.255,
-                'slot5_x': 0.575,
-                'slot5_y': 0.333,
-                'slot5_w': 0.85,
-                'slot5_h': 0.255,
-                'slot6_x': 0.575,
-                'slot6_y': 0.611,
-                'slot6_w': 0.85,
-                'slot6_h': 0.255,
-                'assigned_booth_ids': [1, 2, 3],
-              },
-              const Duration(seconds: 25),
-            );
-          }
-        }
       }
     } catch (e) {
       debugPrint('initRemoteDatabase gagal: $e');
@@ -257,6 +139,7 @@ class MySqlHelper {
           final map = Map<String, dynamic>.from(e as Map);
           final count = int.parse(map['print_count'].toString());
           return {
+            'id_price': int.tryParse(map['id_price']?.toString() ?? '') ?? 0,
             'print_count': count,
             'price': double.parse(map['price'].toString()),
             'label': (map['label'] ?? '${count}x Cetak').toString(),
@@ -344,11 +227,20 @@ class MySqlHelper {
   /// Ambil template sesuai role dan user murni dari database online `pixyboxstudio.biz.id`
   static Future<List<Map<String, dynamic>>> getTemplatesForUser(
       int idUser, String role) async {
-    final res = await _postAction(
-      'get_templates',
-      {'id_user': idUser, 'role': role},
-      const Duration(seconds: 25),
-    );
+    Map<String, dynamic>? res;
+    for (int attempt = 1; attempt <= 2; attempt++) {
+      res = await _postAction(
+        'get_templates',
+        {'id_user': idUser, 'role': role},
+        const Duration(seconds: 30),
+      );
+      if (res != null && res['success'] == true && res['templates'] is List) {
+        break;
+      }
+      if (attempt < 2) {
+        await Future.delayed(const Duration(milliseconds: 800));
+      }
+    }
 
     if (res != null && res['success'] == true && res['templates'] is List) {
       final List<dynamic> rawList = res['templates'] as List<dynamic>;

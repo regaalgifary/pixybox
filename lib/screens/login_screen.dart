@@ -309,37 +309,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                         ),
                       ),
-                      const SizedBox(height: 24),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: kSoftRedBg,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: kBorderRed),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Info Akun Lokal (Default):',
-                              style: TextStyle(
-                                color: kPrimaryRed,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '• Admin: admin_pixy  |  Pass: admin123\n• Booth: photobox_01  |  Pass: password123',
-                              style: TextStyle(
-                                color: kPrimaryRed.withAlpha(190),
-                                fontSize: 11,
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                     ],
                   ),
                 ),

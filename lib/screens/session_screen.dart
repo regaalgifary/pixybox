@@ -55,6 +55,7 @@ class _SessionScreenState extends State<SessionScreen> {
   bool _isCheckingPayment = false;
   String _paymentStatus = 'pending';
 
+  int _selectedPriceIndex = 0;
   int _selectedPrintCount = 1;
   double _price = 25000.0;
   bool _isLoadingPrice = true;
@@ -108,6 +109,8 @@ class _SessionScreenState extends State<SessionScreen> {
   int _doneCountdown = 60;
   String? _softfileDownloadUrl;
   bool _isUploadingSoftfile = false;
+  bool _isSoftfileUploaded = false;
+  Map<String, dynamic>? _lastSoftfilePayload;
 
   // List menyimpan file foto asli
   final List<XFile> _capturedPhotos = [];
@@ -229,25 +232,22 @@ class _SessionScreenState extends State<SessionScreen> {
     if (!mounted) return;
     setState(() {
       _priceList = prices;
-      if (prices.isNotEmpty && !prices.any((p) => p['print_count'] == _selectedPrintCount)) {
-        _selectedPrintCount = prices.first['print_count'] as int;
+      if (_selectedPriceIndex >= _priceList.length) {
+        _selectedPriceIndex = 0;
       }
       _updatePrice();
       _isLoadingPrice = false;
     });
-
-    if (_currentStage == 'PAYMENT' && !_isGeneratingQR && _qrisString == null && _qrisUrl == null) {
-      _generateQrisPayment();
-    }
   }
 
   void _goToPaymentStage() {
     setState(() {
       _currentStage = 'PAYMENT';
       _paymentCountdown = 179; // 02:59
+      _selectedPriceIndex = 0;
     });
     _startPaymentCountdown();
-    _generateQrisPayment();
+    _generateQrisPayment(refreshFromDb: true);
   }
 
   void _startPaymentCountdown() {
@@ -280,12 +280,13 @@ class _SessionScreenState extends State<SessionScreen> {
       _isGeneratingQR = false;
       _paymentStatus = 'pending';
     });
-    // Segarkan harga terbaru dari database online di background saat di layar Welcome
+    // Segarkan harga dan template terbaru dari database online di background saat di layar Welcome
     _fetchPricing();
+    _fetchTemplates();
     DokuService.prewarmToken();
   }
 
-  Future<void> _generateQrisPayment() async {
+  Future<void> _generateQrisPayment({bool refreshFromDb = true}) async {
     _qrisPollingTimer?.cancel();
 
     setState(() {
@@ -297,23 +298,23 @@ class _SessionScreenState extends State<SessionScreen> {
     });
     _startPaymentCountdown();
 
-    // Jika harga belum termuat sama sekali, tunggu dari database online;
-    // jika sudah termuat di Welcome Screen, langsung pakai tanpa delay dan segarkan di background
-    if (_priceList.isEmpty || _price <= 0) {
+    // Selalu ambil daftar harga real-time dari database online saat masuk ke Step 2
+    if (refreshFromDb || _priceList.isEmpty || _price <= 0) {
       final userId = widget.user['id_user'] as int;
       final prices = await MySqlHelper.getPricesForUser(userId);
       if (!mounted) return;
       if (prices.isNotEmpty) {
-        _priceList = prices;
-        if (!prices.any((p) => p['print_count'] == _selectedPrintCount)) {
-          _selectedPrintCount = prices.first['print_count'] as int;
-        }
-        _updatePrice();
-        _isLoadingPrice = false;
+        setState(() {
+          _priceList = prices;
+          if (_selectedPriceIndex >= _priceList.length) {
+            _selectedPriceIndex = 0;
+          }
+          _updatePrice();
+          _isLoadingPrice = false;
+        });
       }
     } else {
-      // Segarkan harga dari database online secara non-blocking untuk sesi berikutnya
-      _fetchPricing();
+      _updatePrice();
     }
 
     final int paymentAmount = (_price > 0 ? _price : 25000.0).toInt();
@@ -417,35 +418,49 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   void _updatePrice() {
-    final match = _priceList.firstWhere(
-      (p) => p['print_count'] == _selectedPrintCount,
-      orElse: () => {'print_count': _selectedPrintCount, 'price': _selectedPrintCount == 1 ? 25000.0 : 35000.0},
-    );
-    setState(() {
-      final double parsedPrice = (match['price'] is num)
-          ? (match['price'] as num).toDouble()
-          : (double.tryParse(match['price']?.toString() ?? '') ?? 25000.0);
-      _price = parsedPrice > 0 ? parsedPrice : 25000.0;
-    });
+    if (_priceList.isEmpty) return;
+    final int idx = _selectedPriceIndex.clamp(0, _priceList.length - 1);
+    final match = _priceList[idx];
+    final int parsedCount = (match['print_count'] is int)
+        ? match['print_count'] as int
+        : (int.tryParse(match['print_count']?.toString() ?? '') ?? 1);
+    final double parsedPrice = (match['price'] is num)
+        ? (match['price'] as num).toDouble()
+        : (double.tryParse(match['price']?.toString() ?? '') ?? 25000.0);
+
+    _selectedPriceIndex = idx;
+    _selectedPrintCount = parsedCount;
+    _price = parsedPrice > 0 ? parsedPrice : 25000.0;
   }
 
   Future<void> _fetchTemplates() async {
+    if (!mounted) return;
     setState(() {
       _isLoadingTemplates = true;
     });
     try {
-      final userId = widget.user['id_user'] as int;
-      final role = widget.user['role'] as String;
+      final int userId = widget.user['id_user'] is int
+          ? widget.user['id_user'] as int
+          : (int.tryParse(widget.user['id_user']?.toString() ?? '') ?? 1);
+      final String role = (widget.user['role'] ?? 'booth').toString();
       final temps = await MySqlHelper.getTemplatesForUser(userId, role);
+      if (!mounted) return;
       setState(() {
         _templatesList = temps;
         if (temps.isNotEmpty) {
-          _selectedTemplate = temps.first;
+          final currentId = _selectedTemplate?['id_template'];
+          final match = currentId != null
+              ? temps.where((t) => t['id_template'] == currentId).toList()
+              : <Map<String, dynamic>>[];
+          _selectedTemplate = match.isNotEmpty ? match.first : temps.first;
+        } else {
+          _selectedTemplate = null;
         }
         _isLoadingTemplates = false;
       });
     } catch (e) {
       debugPrint('Error fetching templates: $e');
+      if (!mounted) return;
       setState(() {
         _isLoadingTemplates = false;
       });
@@ -732,6 +747,8 @@ class _SessionScreenState extends State<SessionScreen> {
       _selectedPhotosIndices.clear();
       _isFlashActive = false;
     });
+    // Segarkan daftar template dari database online saat masuk tahap foto agar siap di Step 3
+    _fetchTemplates();
   }
 
   Future<void> _handleRetake() async {
@@ -870,11 +887,13 @@ class _SessionScreenState extends State<SessionScreen> {
       _currentStage = 'SELECTION';
       _selectionSubStep = 1;
     });
+    // Selalu ambil daftar template terbaru langsung dari database online saat masuk ke Step 3
+    _fetchTemplates();
   }
 
   Future<void> _renderAndUploadSoftfile(
-    List<img.Image> processedPhotos,
-    List<Uint8List> processedJpgBytes,
+    List<img.Image> processedSelectedPhotos,
+    Map<int, Uint8List> preProcessedByCaptureIndex,
   ) async {
     final String rawOrderId = _currentOrderId ?? 'PB-${widget.user['id_user']}-${DateTime.now().millisecondsSinceEpoch}';
     final String safeCode = rawOrderId.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '');
@@ -883,11 +902,45 @@ class _SessionScreenState extends State<SessionScreen> {
     if (mounted) {
       setState(() {
         _isUploadingSoftfile = true;
-        _softfileDownloadUrl = 'http://pixyboxstudio.biz.id/?path=/s/$safeCode';
+        _isSoftfileUploaded = false;
+        _softfileDownloadUrl = null;
       });
     }
 
     try {
+      // Siapkan kelima foto hasil jepretan (_capturedPhotos 1..5) sesuai pilihan Mirror/No Mirror & Filter
+      final List<Uint8List> allCapturedJpgBytes = [];
+      final effectiveMatrix = _getEffectiveColorMatrix();
+      final bool needsFilter =
+          (_selectedFilterId != 'normal' && _filterIntensity > 0.0) || _photoBrightness != 0.0;
+
+      for (int i = 0; i < _capturedPhotos.length; i++) {
+        if (preProcessedByCaptureIndex.containsKey(i)) {
+          allCapturedJpgBytes.add(preProcessedByCaptureIndex[i]!);
+          continue;
+        }
+        final f = File(_capturedPhotos[i].path);
+        if (await f.exists()) {
+          final bytes = await f.readAsBytes();
+          try {
+            final decoded = img.decodeImage(bytes);
+            if (decoded != null) {
+              if (_isCameraMirrored) {
+                img.flipHorizontal(decoded);
+              }
+              if (needsFilter) {
+                applyColorMatrixToImage(decoded, effectiveMatrix);
+              }
+              allCapturedJpgBytes.add(Uint8List.fromList(img.encodeJpg(decoded, quality: 98)));
+            } else {
+              allCapturedJpgBytes.add(bytes);
+            }
+          } catch (_) {
+            allCapturedJpgBytes.add(bytes);
+          }
+        }
+      }
+
       img.Image? templateOverlay;
       int canvasW = 1600;
       int canvasH = 2400;
@@ -964,9 +1017,9 @@ class _SessionScreenState extends State<SessionScreen> {
         final double s3w = (t['slot3_w'] as num).toDouble();
         final double s3H = (t['slot3_h'] as num).toDouble();
 
-        if (processedPhotos.isNotEmpty) drawPhotoSlot(processedPhotos[0], s1x, s1y, s1w, s1h);
-        if (processedPhotos.length > 1) drawPhotoSlot(processedPhotos[1], s2x, s2y, s2w, s2h);
-        if (processedPhotos.length > 2) drawPhotoSlot(processedPhotos[2], s3x, s3y, s3w, s3H);
+        if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], s1x, s1y, s1w, s1h);
+        if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], s2x, s2y, s2w, s2h);
+        if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], s3x, s3y, s3w, s3H);
 
         if (t['template_mode'] == 'strip_semi_4r') {
           final double s4x = ((t['slot4_x'] ?? (s1x + 0.5)) as num).toDouble();
@@ -984,18 +1037,18 @@ class _SessionScreenState extends State<SessionScreen> {
           final double s6w = ((t['slot6_w'] ?? s3w) as num).toDouble();
           final double s6h = ((t['slot6_h'] ?? s3H) as num).toDouble();
 
-          if (processedPhotos.isNotEmpty) drawPhotoSlot(processedPhotos[0], s4x, s4y, s4w, s4h);
-          if (processedPhotos.length > 1) drawPhotoSlot(processedPhotos[1], s5x, s5y, s5w, s5h);
-          if (processedPhotos.length > 2) drawPhotoSlot(processedPhotos[2], s6x, s6y, s6w, s6h);
+          if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], s4x, s4y, s4w, s4h);
+          if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], s5x, s5y, s5w, s5h);
+          if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], s6x, s6y, s6w, s6h);
         }
 
         if (templateOverlay != null) {
           img.compositeImage(canvas, templateOverlay, dstX: 0, dstY: 0);
         }
       } else {
-        if (processedPhotos.isNotEmpty) drawPhotoSlot(processedPhotos[0], 0.06, 0.04, 0.88, 0.28);
-        if (processedPhotos.length > 1) drawPhotoSlot(processedPhotos[1], 0.06, 0.36, 0.88, 0.28);
-        if (processedPhotos.length > 2) drawPhotoSlot(processedPhotos[2], 0.06, 0.68, 0.88, 0.28);
+        if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], 0.06, 0.04, 0.88, 0.28);
+        if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], 0.06, 0.36, 0.88, 0.28);
+        if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], 0.06, 0.68, 0.88, 0.28);
       }
 
       final Uint8List compositeBytes = Uint8List.fromList(img.encodeJpg(canvas, quality: 98));
@@ -1013,29 +1066,68 @@ class _SessionScreenState extends State<SessionScreen> {
         'total_price': _price,
         'payment_status': _paymentStatus,
         'composite_base64': base64Encode(compositeBytes),
-        if (processedJpgBytes.isNotEmpty) 'photo1_base64': base64Encode(processedJpgBytes[0]),
-        if (processedJpgBytes.length > 1) 'photo2_base64': base64Encode(processedJpgBytes[1]),
-        if (processedJpgBytes.length > 2) 'photo3_base64': base64Encode(processedJpgBytes[2]),
+        if (allCapturedJpgBytes.isNotEmpty) 'photo1_base64': base64Encode(allCapturedJpgBytes[0]),
+        if (allCapturedJpgBytes.length > 1) 'photo2_base64': base64Encode(allCapturedJpgBytes[1]),
+        if (allCapturedJpgBytes.length > 2) 'photo3_base64': base64Encode(allCapturedJpgBytes[2]),
+        if (allCapturedJpgBytes.length > 3) 'photo4_base64': base64Encode(allCapturedJpgBytes[3]),
+        if (allCapturedJpgBytes.length > 4) 'photo5_base64': base64Encode(allCapturedJpgBytes[4]),
       };
 
-      final response = await http
-          .post(
-            Uri.parse('http://pixyboxstudio.biz.id/?path=/api/upload-softfile'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 25));
+      _lastSoftfilePayload = payload;
+      await _sendSoftfilePayload(payload, safeCode);
+    } catch (e) {
+      debugPrint('Gagal merender/upload softfile ke pixyboxstudio.biz.id: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingSoftfile = false;
+        });
+      }
+    }
+  }
 
-      if (response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
-        if (decoded is Map && decoded['download_url'] != null && mounted) {
-          setState(() {
-            _softfileDownloadUrl = decoded['download_url'].toString();
-          });
+  Future<void> _sendSoftfilePayload(Map<String, dynamic> payload, String safeCode) async {
+    for (int attempt = 1; attempt <= 2; attempt++) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('http://pixyboxstudio.biz.id/?path=/api/upload-softfile'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(payload),
+            )
+            .timeout(const Duration(seconds: 40));
+
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map && decoded['success'] == true) {
+            if (mounted) {
+              setState(() {
+                _isSoftfileUploaded = true;
+                _softfileDownloadUrl = (decoded['download_url'] ?? 'http://pixyboxstudio.biz.id/?path=/s/$safeCode').toString();
+                _doneCountdown = 60;
+              });
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('Attempt $attempt gagal upload softfile: $e');
+        if (attempt < 2) {
+          await Future.delayed(const Duration(seconds: 2));
         }
       }
-    } catch (e) {
-      debugPrint('Gagal upload softfile ke pixyboxstudio.biz.id: $e');
+    }
+  }
+
+  Future<void> _retryUploadSoftfile() async {
+    if (_lastSoftfilePayload == null || _isUploadingSoftfile) return;
+    final String safeCode = (_lastSoftfilePayload!['order_id'] ?? _currentOrderId ?? '').toString();
+    setState(() {
+      _isUploadingSoftfile = true;
+      _isSoftfileUploaded = false;
+    });
+    try {
+      await _sendSoftfilePayload(_lastSoftfilePayload!, safeCode);
     } finally {
       if (mounted) {
         setState(() {
@@ -1051,18 +1143,15 @@ class _SessionScreenState extends State<SessionScreen> {
     });
 
     try {
-      final List<File> imageFiles = _selectedPhotosIndices
-          .map((idx) => File(_capturedPhotos[idx].path))
-          .toList();
-
       List<pw.MemoryImage> pdfImages = [];
       List<img.Image> processedImgList = [];
-      List<Uint8List> processedJpgBytesList = [];
+      Map<int, Uint8List> preProcessedByCaptureIndex = {};
       final effectiveMatrix = _getEffectiveColorMatrix();
       final bool needsFilter =
           (_selectedFilterId != 'normal' && _filterIntensity > 0.0) || _photoBrightness != 0.0;
 
-      for (var f in imageFiles) {
+      for (final int captureIdx in _selectedPhotosIndices) {
+        final f = File(_capturedPhotos[captureIdx].path);
         if (await f.exists()) {
           final bytes = await f.readAsBytes();
           try {
@@ -1076,7 +1165,7 @@ class _SessionScreenState extends State<SessionScreen> {
               }
               final flippedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 100));
               processedImgList.add(decoded);
-              processedJpgBytesList.add(flippedBytes);
+              preProcessedByCaptureIndex[captureIdx] = flippedBytes;
               pdfImages.add(pw.MemoryImage(flippedBytes));
             } else {
               pdfImages.add(pw.MemoryImage(bytes));
@@ -1088,8 +1177,8 @@ class _SessionScreenState extends State<SessionScreen> {
         }
       }
 
-      // Render composite template image & upload softfile asynchronously
-      unawaited(_renderAndUploadSoftfile(processedImgList, processedJpgBytesList));
+      // Render composite template image & upload all 5 raw photos + composite softfile asynchronously
+      unawaited(_renderAndUploadSoftfile(processedImgList, preProcessedByCaptureIndex));
 
       final printers = await Printing.listPrinters();
       Printer? targetPrinter;
@@ -1411,6 +1500,10 @@ class _SessionScreenState extends State<SessionScreen> {
         timer.cancel();
         return;
       }
+      // Jangan kurangi waktu hitung mundur selama softfile masih sedang diunggah ke server
+      if (_isUploadingSoftfile) {
+        return;
+      }
       if (_doneCountdown > 1) {
         setState(() {
           _doneCountdown--;
@@ -1468,9 +1561,13 @@ class _SessionScreenState extends State<SessionScreen> {
       _selectionSubStep = 1;
       _softfileDownloadUrl = null;
       _isUploadingSoftfile = false;
+      _isSoftfileUploaded = false;
+      _lastSoftfilePayload = null;
     });
 
     _updatePrice();
+    _fetchPricing();
+    _fetchTemplates();
   }
 
   bool _canPop = false;
@@ -1882,7 +1979,58 @@ class _SessionScreenState extends State<SessionScreen> {
                                 letterSpacing: 4,
                               ),
                             ),
-                            const SizedBox(height: 20),
+                            if (_priceList.length > 1) ...[
+                              const SizedBox(height: 14),
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 10,
+                                alignment: WrapAlignment.center,
+                                children: List.generate(_priceList.length, (idx) {
+                                  final item = _priceList[idx];
+                                  final int cnt = item['print_count'] as int;
+                                  final double prc = (item['price'] as num).toDouble();
+                                  final String prcStr = 'Rp ${prc.toInt().toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}';
+                                  final bool isSelected = _selectedPriceIndex == idx;
+
+                                  return GestureDetector(
+                                    onTap: () {
+                                      if (_selectedPriceIndex != idx) {
+                                        setState(() {
+                                          _selectedPriceIndex = idx;
+                                          _updatePrice();
+                                        });
+                                        _generateQrisPayment(refreshFromDb: false);
+                                      }
+                                    },
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 200),
+                                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+                                      decoration: BoxDecoration(
+                                        color: isSelected ? kPrimaryRed : Colors.white,
+                                        borderRadius: BorderRadius.circular(30),
+                                        border: Border.all(color: kPrimaryRed, width: 2),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: isSelected ? kDarkRed : kPrimaryRed.withAlpha(70),
+                                            offset: const Offset(0, 3),
+                                            blurRadius: 0,
+                                          ),
+                                        ],
+                                      ),
+                                      child: Text(
+                                        '${cnt}x Cetak • $prcStr',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w800,
+                                          color: isSelected ? Colors.white : kPrimaryRed,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ],
+                            const SizedBox(height: 18),
 
                             // Enlarged QR Box
                             Container(
@@ -1976,9 +2124,9 @@ class _SessionScreenState extends State<SessionScreen> {
                             ),
                             const SizedBox(height: 22),
 
-                            const Text(
-                              'Total Pembayaran',
-                              style: TextStyle(
+                            Text(
+                              'Total Pembayaran (${_selectedPrintCount}x Cetak)',
+                              style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
                                 color: Color(0xFF9E353A),
@@ -2008,7 +2156,7 @@ class _SessionScreenState extends State<SessionScreen> {
 
                             // Status / Countdown Pill (clickable to regenerate when expired/failed)
                             GestureDetector(
-                              onTap: isExpiredOrFailed ? _generateQrisPayment : null,
+                              onTap: isExpiredOrFailed ? () => _generateQrisPayment(refreshFromDb: true) : null,
                               child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 12),
                                 decoration: BoxDecoration(
@@ -2129,9 +2277,14 @@ class _SessionScreenState extends State<SessionScreen> {
               child: SizedBox(
                 width: 1000 * _cameraController!.value.aspectRatio,
                 height: 1000,
+                // Pada Windows (camera_windows), CameraPreview secara native sudah mirror (mirror_preview_ = true),
+                // sedangkan file hasil takePicture() disimpan tanpa mirror (asli/raw sensor).
+                // Maka saat Mirror aktif (_isCameraMirrored == true), preview dibiarkan 0.0 (tetap mirror)
+                // dan hasil foto di-flip horizontal agar sama persis; saat No Mirror (_isCameraMirrored == false),
+                // preview diputar math.pi (menjadi asli) dan hasil foto tidak di-flip.
                 child: TweenAnimationBuilder<double>(
                   tween: Tween<double>(
-                    end: _isCameraMirrored ? math.pi : 0.0,
+                    end: _isCameraMirrored ? 0.0 : math.pi,
                   ),
                   duration: const Duration(milliseconds: 600),
                   curve: Curves.easeInOutCubic,
@@ -3236,7 +3389,7 @@ class _SessionScreenState extends State<SessionScreen> {
         ),
         const SizedBox(width: 14),
 
-        // 3. KOLOM KANAN: PILIHAN TEMPLATE BESAR (1 KOLOM MENJAJAR KE BAWAH)
+        // 3. KOLOM KANAN: PILIHAN TEMPLATE DARI DATABASE ONLINE (1 KOLOM MENJAJAR KE BAWAH)
         Expanded(
           flex: 3,
           child: Container(
@@ -3256,101 +3409,139 @@ class _SessionScreenState extends State<SessionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Center(
-                  child: Text(
-                    'PILIH TEMPLATE',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                      color: kPrimaryRed,
-                      letterSpacing: 0.6,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'PILIH TEMPLATE (${_templatesList.length})',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: kPrimaryRed,
+                        letterSpacing: 0.6,
+                      ),
                     ),
-                  ),
+                    IconButton(
+                      onPressed: _isLoadingTemplates ? null : _fetchTemplates,
+                      tooltip: 'Muat ulang template dari database online',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.refresh_rounded, color: kPrimaryRed, size: 20),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Expanded(
-                  child: _isLoadingTemplates
+                  child: _isLoadingTemplates && _templatesList.isEmpty
                       ? const Center(child: CircularProgressIndicator(color: kPrimaryRed))
-                      : ListView.builder(
-                          physics: const BouncingScrollPhysics(),
-                          itemCount: _templatesList.length + 1,
-                          itemBuilder: (context, index) {
-                            final bool isNoTemplate = index == 0;
-                            final Map<String, dynamic>? template =
-                                isNoTemplate ? null : _templatesList[index - 1];
-                            final bool isSelected = isNoTemplate
-                                ? _selectedTemplate == null
-                                : _selectedTemplate != null &&
-                                    _selectedTemplate!['id_template'] == template!['id_template'];
-
-                            return GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  _selectedTemplate = template;
-                                });
-                              },
-                              child: MouseRegion(
-                                cursor: SystemMouseCursors.click,
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  margin: const EdgeInsets.only(bottom: 14),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: isSelected ? kSoftRedBg : Colors.white,
-                                    borderRadius: BorderRadius.circular(18),
-                                    border: Border.all(
-                                      color: isSelected ? kPrimaryRed : kBorderRed,
-                                      width: isSelected ? 3.5 : 1.5,
+                      : _templatesList.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.photo_album_outlined, color: kPrimaryRed, size: 38),
+                                  const SizedBox(height: 10),
+                                  const Text(
+                                    'Belum ada template di database online untuk booth ini.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: kTextMuted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
                                     ),
-                                    boxShadow: isSelected
-                                        ? [
-                                            BoxShadow(
-                                              color: kPrimaryRed.withAlpha(75),
-                                              blurRadius: 10,
-                                              offset: const Offset(0, 4),
-                                            ),
-                                          ]
-                                        : null,
                                   ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      AspectRatio(
-                                        aspectRatio: _getTemplateSheetAspectRatio(template),
-                                        child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(10),
-                                          child: isNoTemplate
-                                              ? _buildSimple3PhotoPreview()
-                                              : LayoutBuilder(
-                                                  builder: (context, constraints) {
-                                                    return _buildCompositePreview(
-                                                      constraints.maxWidth,
-                                                      constraints.maxHeight,
-                                                      templateOverride: template,
-                                                    );
-                                                  },
-                                                ),
-                                        ),
+                                  const SizedBox(height: 12),
+                                  ElevatedButton.icon(
+                                    onPressed: _fetchTemplates,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: kPrimaryRed,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(18),
                                       ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        isNoTemplate ? 'Polos' : (template!['name'] as String),
-                                        style: TextStyle(
-                                          color: kPrimaryRed,
-                                          fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold,
-                                          fontSize: 13,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
+                                    ),
+                                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                                    label: const Text(
+                                      'Muat Ulang',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
-                            );
-                          },
-                        ),
+                            )
+                          : ListView.builder(
+                              physics: const BouncingScrollPhysics(),
+                              itemCount: _templatesList.length,
+                              itemBuilder: (context, index) {
+                                final Map<String, dynamic> template = _templatesList[index];
+                                final bool isSelected = _selectedTemplate != null &&
+                                    _selectedTemplate!['id_template'] == template['id_template'];
+
+                                return GestureDetector(
+                                  onTap: () {
+                                    setState(() {
+                                      _selectedTemplate = template;
+                                    });
+                                  },
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 180),
+                                      margin: const EdgeInsets.only(bottom: 14),
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: isSelected ? kSoftRedBg : Colors.white,
+                                        borderRadius: BorderRadius.circular(18),
+                                        border: Border.all(
+                                          color: isSelected ? kPrimaryRed : kBorderRed,
+                                          width: isSelected ? 3.5 : 1.5,
+                                        ),
+                                        boxShadow: isSelected
+                                            ? [
+                                                BoxShadow(
+                                                  color: kPrimaryRed.withAlpha(75),
+                                                  blurRadius: 10,
+                                                  offset: const Offset(0, 4),
+                                                ),
+                                              ]
+                                            : null,
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          AspectRatio(
+                                            aspectRatio: _getTemplateSheetAspectRatio(template),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(10),
+                                              child: LayoutBuilder(
+                                                builder: (context, constraints) {
+                                                  return _buildCompositePreview(
+                                                    constraints.maxWidth,
+                                                    constraints.maxHeight,
+                                                    templateOverride: template,
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            template['name'] as String,
+                                            style: TextStyle(
+                                              color: kPrimaryRed,
+                                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold,
+                                              fontSize: 13,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                 ),
               ],
             ),
@@ -3917,8 +4108,7 @@ class _SessionScreenState extends State<SessionScreen> {
   // TAHAP 4: PRINTING & QR SOFTFILE (WHITE & RED THEME)
   // =========================================================================
   Widget _buildPrintingStage() {
-    final String qrUrl = _softfileDownloadUrl ??
-        'https://pixyboxstudio.biz.id/s/${_currentOrderId ?? ''}';
+    final bool canShowQr = _isSoftfileUploaded && !_isUploadingSoftfile && _softfileDownloadUrl != null;
 
     return Center(
       child: Container(
@@ -3951,34 +4141,51 @@ class _SessionScreenState extends State<SessionScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: kPrimaryRed, width: 2.5),
-              ),
-              child: QrImageView(
-                data: qrUrl,
-                version: QrVersions.auto,
-                size: 200,
-                backgroundColor: Colors.white,
-                eyeStyle: const QrEyeStyle(
-                  eyeShape: QrEyeShape.square,
-                  color: Color(0xFF981B1E),
+            if (canShowQr) ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: kPrimaryRed, width: 2.5),
                 ),
-                dataModuleStyle: const QrDataModuleStyle(
-                  dataModuleShape: QrDataModuleShape.square,
-                  color: Color(0xFF981B1E),
+                child: QrImageView(
+                  data: _softfileDownloadUrl!,
+                  version: QrVersions.auto,
+                  size: 200,
+                  backgroundColor: Colors.white,
+                  eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.square,
+                    color: Color(0xFF981B1E),
+                  ),
+                  dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.square,
+                    color: Color(0xFF981B1E),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Scan QR untuk Download Soft File Hasil Foto',
-              style: TextStyle(fontSize: 13, color: kPrimaryRed, fontWeight: FontWeight.w800),
-              textAlign: TextAlign.center,
-            ),
+              const SizedBox(height: 12),
+              const Text(
+                'Scan QR untuk Download Soft File Hasil Foto',
+                style: TextStyle(fontSize: 13, color: kPrimaryRed, fontWeight: FontWeight.w800),
+                textAlign: TextAlign.center,
+              ),
+            ] else ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                decoration: BoxDecoration(
+                  color: kSoftRedBg,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: kBorderRed, width: 1.5),
+                ),
+                child: const Text(
+                  'Mengunggah 5 foto & hasil template HD ke server...\nQR Code akan tampil otomatis setelah unggahan selesai.',
+                  style: TextStyle(fontSize: 13, color: kTextDark, fontWeight: FontWeight.w700, height: 1.5),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -3989,8 +4196,7 @@ class _SessionScreenState extends State<SessionScreen> {
   // TAHAP 5: SELESAI & QR LINK DOWNLOAD SOFT FILE (WHITE & RED THEME)
   // =========================================================================
   Widget _buildDoneStage() {
-    final String qrUrl = _softfileDownloadUrl ??
-        'https://pixyboxstudio.biz.id/s/${_currentOrderId ?? ''}';
+    final bool canShowQr = _isSoftfileUploaded && !_isUploadingSoftfile && _softfileDownloadUrl != null;
 
     return Center(
       child: SingleChildScrollView(
@@ -4023,20 +4229,24 @@ class _SessionScreenState extends State<SessionScreen> {
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 1.5),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Scan QR di bawah untuk mengunduh Soft File hasil foto & template Anda',
+              Text(
+                canShowQr
+                    ? 'Scan QR di bawah untuk mengunduh 5 foto & template HD Anda'
+                    : (_isUploadingSoftfile
+                        ? 'Mohon tunggu sebentar, sedang mengunggah 5 foto & template HD ke server...'
+                        : 'Unggahan soft file belum selesai, silakan coba unggah ulang.'),
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13.5, color: kTextDark, fontWeight: FontWeight.w600),
+                style: const TextStyle(fontSize: 13.5, color: kTextDark, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 20),
 
-              // QR Code Download Softfile
+              // QR Code Download Softfile (hanya tampil jika upload ke server sudah selesai 100%)
               Container(
                 width: 260,
                 height: 260,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: canShowQr ? Colors.white : kSoftRedBg,
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: kPrimaryRed, width: 3),
                   boxShadow: [
@@ -4048,25 +4258,86 @@ class _SessionScreenState extends State<SessionScreen> {
                   ],
                 ),
                 child: Center(
-                  child: QrImageView(
-                    data: qrUrl,
-                    version: QrVersions.auto,
-                    size: 224,
-                    backgroundColor: Colors.white,
-                    eyeStyle: const QrEyeStyle(
-                      eyeShape: QrEyeShape.square,
-                      color: Color(0xFF981B1E),
-                    ),
-                    dataModuleStyle: const QrDataModuleStyle(
-                      dataModuleShape: QrDataModuleShape.square,
-                      color: Color(0xFF981B1E),
-                    ),
-                  ),
+                  child: canShowQr
+                      ? QrImageView(
+                          data: _softfileDownloadUrl!,
+                          version: QrVersions.auto,
+                          size: 224,
+                          backgroundColor: Colors.white,
+                          eyeStyle: const QrEyeStyle(
+                            eyeShape: QrEyeShape.square,
+                            color: Color(0xFF981B1E),
+                          ),
+                          dataModuleStyle: const QrDataModuleStyle(
+                            dataModuleShape: QrDataModuleShape.square,
+                            color: Color(0xFF981B1E),
+                          ),
+                        )
+                      : (_isUploadingSoftfile
+                          ? const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 48,
+                                  height: 48,
+                                  child: CircularProgressIndicator(color: kPrimaryRed, strokeWidth: 4),
+                                ),
+                                SizedBox(height: 16),
+                                Text(
+                                  'MENGUNGGAH\nSOFT FILE HD...',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                    color: kPrimaryRed,
+                                    letterSpacing: 0.8,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                SizedBox(height: 6),
+                                Text(
+                                  'QR akan muncul otomatis',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 11, color: kTextMuted, fontWeight: FontWeight.w700),
+                                ),
+                              ],
+                            )
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.cloud_off_rounded, color: kPrimaryRed, size: 46),
+                                const SizedBox(height: 10),
+                                const Text(
+                                  'Gagal Mengunggah Soft File',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: kPrimaryRed),
+                                ),
+                                const SizedBox(height: 12),
+                                ElevatedButton.icon(
+                                  onPressed: _retryUploadSoftfile,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: kPrimaryRed,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                                  ),
+                                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                                  label: const Text(
+                                    'Coba Lagi',
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+                                  ),
+                                ),
+                              ],
+                            )),
                 ),
               ),
               const SizedBox(height: 10),
               Text(
-                _isUploadingSoftfile ? 'Mengunggah soft file ke server...' : qrUrl,
+                canShowQr
+                    ? _softfileDownloadUrl!
+                    : (_isUploadingSoftfile
+                        ? 'Harap tunggu hingga unggahan ke server online selesai...'
+                        : 'Periksa koneksi internet dan tekan Coba Lagi'),
                 style: const TextStyle(fontSize: 11.5, color: kTextMuted, fontWeight: FontWeight.w700),
                 textAlign: TextAlign.center,
               ),
@@ -4095,7 +4366,7 @@ class _SessionScreenState extends State<SessionScreen> {
                     ),
                   ),
                   child: Text(
-                    'MULAI SESI BARU ($_doneCountdown s)',
+                    _isUploadingSoftfile ? 'MULAI SESI BARU' : 'MULAI SESI BARU ($_doneCountdown s)',
                     style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2, fontSize: 15),
                   ),
                 ),
