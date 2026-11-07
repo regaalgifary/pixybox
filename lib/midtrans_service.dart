@@ -9,7 +9,12 @@ class MidtransService {
   static void _ensureKeysLoaded() {
     if (_keysCache != null) return;
     try {
-      final file = File('payment_keys.json');
+      File? file = File('payment_keys.json');
+      if (!file.existsSync()) {
+        final exeDir = File(Platform.resolvedExecutable).parent.path;
+        final exeFile = File('$exeDir${Platform.pathSeparator}payment_keys.json');
+        if (exeFile.existsSync()) file = exeFile;
+      }
       if (file.existsSync()) {
         final data = jsonDecode(file.readAsStringSync());
         _keysCache = data['midtrans'] as Map<String, dynamic>? ?? {};

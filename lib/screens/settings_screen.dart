@@ -22,6 +22,13 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  static const Color kPrimaryRed = Color(0xFFD3242B);
+  static const Color kDarkRed = Color(0xFF94151A);
+  static const Color kSoftRedBg = Color(0xFFFFF5F5);
+  static const Color kBorderRed = Color(0xFFF3C6C8);
+  static const Color kTextDark = Color(0xFF1F1F1F);
+  static const Color kTextMuted = Color(0xFF7A6869);
+
   CameraDescription? _selectedCameraDescription;
   String? _selectedPrinter;
 
@@ -56,11 +63,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _templateNameInput = '';
   Uint8List? _uploadedPngBytes;
   String _uploadedPngFileName = '';
+  String _templateMode = '4r'; // '4r', 'strip', or 'strip_semi_4r'
 
   // Slot coordinates (normalized 0.0 to 1.0)
+  // Sisi Kiri (Foto 1, 2, 3)
   double _s1x = 0.1, _s1y = 0.1, _s1w = 0.8, _s1h = 0.23;
   double _s2x = 0.1, _s2y = 0.38, _s2w = 0.8, _s2h = 0.23;
   double _s3x = 0.1, _s3y = 0.66, _s3w = 0.8, _s3h = 0.23;
+  // Sisi Kanan (Foto 1, 2, 3 Kanan pada mode Strip Semi 4R - dapat diposisikan manual)
+  double _s4x = 0.55, _s4y = 0.1, _s4w = 0.4, _s4h = 0.23;
+  double _s5x = 0.55, _s5y = 0.38, _s5w = 0.4, _s5h = 0.23;
+  double _s6x = 0.55, _s6y = 0.66, _s6w = 0.4, _s6h = 0.23;
 
   final TextEditingController _templateNameController = TextEditingController();
 
@@ -160,12 +173,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (result != null && result.files.single.path != null) {
         final file = File(result.files.single.path!);
         final bytes = await file.readAsBytes();
-        
+
+        // Auto-detect mode jika rasio gambar mendekati strip (51mm x 152mm = rasio ~0.335)
+        try {
+          final decoded = img.decodeImage(bytes);
+          if (decoded != null && decoded.height > 0) {
+            final ratio = decoded.width / decoded.height;
+            if (ratio < 0.50) {
+              setState(() {
+                _templateMode = 'strip';
+              });
+            } else if (_templateMode == 'strip') {
+              setState(() {
+                _templateMode = '4r';
+              });
+            }
+          }
+        } catch (_) {}
+
         if (!mounted) return;
         final croppedBytes = await showDialog<Uint8List>(
           context: context,
           barrierDismissible: false,
-          builder: (context) => ImageCropDialog(imageBytes: bytes),
+          builder: (context) => ImageCropDialog(
+            imageBytes: bytes,
+            templateMode: _templateMode,
+          ),
         );
 
         if (croppedBytes != null) {
@@ -178,7 +211,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       debugPrint('Error picking file: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal memilih file: $e'), backgroundColor: Colors.redAccent),
+        SnackBar(content: Text('Gagal memilih file: $e'), backgroundColor: kPrimaryRed),
       );
     }
   }
@@ -186,19 +219,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveTemplateToDb() async {
     if (_templateNameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nama template tidak boleh kosong!'), backgroundColor: Colors.redAccent),
+        const SnackBar(content: Text('Nama template tidak boleh kosong!'), backgroundColor: kPrimaryRed),
       );
       return;
     }
     if (_uploadedPngBytes == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Anda harus mengupload gambar template PNG!'), backgroundColor: Colors.redAccent),
+        const SnackBar(content: Text('Anda harus mengupload gambar template PNG!'), backgroundColor: kPrimaryRed),
       );
       return;
     }
     if (_selectedBoothIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih minimal satu booth user untuk template ini!'), backgroundColor: Colors.redAccent),
+        const SnackBar(content: Text('Pilih minimal satu booth user untuk template ini!'), backgroundColor: kPrimaryRed),
       );
       return;
     }
@@ -209,9 +242,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         idUser: userId,
         name: _templateNameController.text.trim(),
         imageData: _uploadedPngBytes!,
+        templateMode: _templateMode,
         slot1X: _s1x, slot1Y: _s1y, slot1W: _s1w, slot1H: _s1h,
         slot2X: _s2x, slot2Y: _s2y, slot2W: _s2w, slot2H: _s2h,
         slot3X: _s3x, slot3Y: _s3y, slot3W: _s3w, slot3H: _s3h,
+        slot4X: _s4x, slot4Y: _s4y, slot4W: _s4w, slot4H: _s4h,
+        slot5X: _s5x, slot5Y: _s5y, slot5W: _s5w, slot5H: _s5h,
+        slot6X: _s6x, slot6Y: _s6y, slot6W: _s6w, slot6H: _s6h,
         assignedBoothIds: _selectedBoothIds,
       );
 
@@ -231,7 +268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       debugPrint('Error saving template: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal menyimpan template: $e'), backgroundColor: Colors.redAccent),
+        SnackBar(content: Text('Gagal menyimpan template: $e'), backgroundColor: kPrimaryRed),
       );
     }
   }
@@ -246,7 +283,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       debugPrint('Error deleting template: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal menghapus template: $e'), backgroundColor: Colors.redAccent),
+        SnackBar(content: Text('Gagal menghapus template: $e'), backgroundColor: kPrimaryRed),
       );
     }
   }
@@ -255,15 +292,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {
       _isEditingTemplate = true;
       _editingTemplateId = null;
+      _templateMode = '4r';
       _templateNameController.clear();
       _uploadedPngBytes = null;
       _uploadedPngFileName = '';
       _selectedBoothIds.clear();
-      
+
       // Reset slots ke default
       _s1x = 0.1; _s1y = 0.08; _s1w = 0.8; _s1h = 0.25;
       _s2x = 0.1; _s2y = 0.36; _s2w = 0.8; _s2h = 0.25;
       _s3x = 0.1; _s3y = 0.64; _s3w = 0.8; _s3h = 0.25;
+      _s4x = 0.55; _s4y = 0.08; _s4w = 0.40; _s4h = 0.25;
+      _s5x = 0.55; _s5y = 0.36; _s5w = 0.40; _s5h = 0.25;
+      _s6x = 0.55; _s6y = 0.64; _s6w = 0.40; _s6h = 0.25;
     });
   }
 
@@ -289,7 +330,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     List<CameraDescription> detectedCameras = [];
 
     try {
-      // Fetch all printers via PowerShell
       final printerResult = await Process.run('powershell', [
         '-Command',
         'Get-Printer | Select-Object -ExpandProperty Name'
@@ -307,7 +347,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     try {
-      // Fetch cameras via availableCameras()
       detectedCameras = await availableCameras();
     } catch (e) {
       debugPrint('Error loading cameras: $e');
@@ -344,7 +383,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final sessionId = ++_cameraSessionId;
 
     setState(() {
-      _selectedCameraDescription = camera; // Set langsung agar tombol mulai sesi aktif
+      _selectedCameraDescription = camera;
       _isCameraPreviewInitialized = false;
       _isCameraLoading = true;
     });
@@ -361,13 +400,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (sessionId != _cameraSessionId) return;
 
-    // Tunggu 1500ms agar OS/driver Windows melepas kunci hardware kamera
     await Future.delayed(const Duration(milliseconds: 1500));
     if (sessionId != _cameraSessionId) return;
 
     final newController = CameraController(
       camera,
-      ResolutionPreset.medium,
+      ResolutionPreset.veryHigh,
       enableAudio: false,
     );
 
@@ -380,7 +418,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     _previewController = newController;
 
-    // Retry loop untuk mengatasi lock kamera Windows
     int retryCount = 0;
     bool success = false;
     while (retryCount < 5 && !success && sessionId == _cameraSessionId) {
@@ -423,14 +460,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _startSession() {
     if (_selectedCameraDescription != null && _selectedPrinter != null) {
-      final sessionId = ++_cameraSessionId; // Batalkan semua inisialisasi kamera yang berjalan di background
-      
-      // Dapatkan Future disposal, fallback ke Future.value jika controller null
+      final sessionId = ++_cameraSessionId;
+
       final Future<void> disposeFuture = _previewController?.dispose() ?? Future.value();
       _previewController = null;
       _isCameraPreviewInitialized = false;
 
-      // Lock fullscreen mode
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       windowManager.setFullScreen(true);
 
@@ -446,10 +481,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ).then((_) {
-            // Restore normal screen mode when returning to dashboard
             SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
             windowManager.setFullScreen(false);
-            // Re-initialize preview when returning to dashboard
             _loadSystemDevices();
           });
         }
@@ -481,167 +514,204 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final alamat = widget.user['alamat_photobox'] ?? 'Tidak ada alamat';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F0F),
+      backgroundColor: const Color(0xFFFFFDFC),
       body: Row(
         children: [
-          // SIDEBAR (Informasi Akun)
+          // SIDEBAR (Informasi Akun - White & Red Theme)
           Material(
-            color: const Color(0xFF161616),
+            color: kSoftRedBg,
             child: Container(
               width: 300,
+              decoration: const BoxDecoration(
+                border: Border(right: BorderSide(color: kPrimaryRed, width: 2.5)),
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
               child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Center(
+                    child: PixyboxOvalLogo(
+                      width: 210,
+                      height: 76,
+                      fontSize: 24,
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: kPrimaryRed,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: kPrimaryRed.withAlpha(60),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.admin_panel_settings, size: 26, color: Colors.white),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              username.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                                color: kPrimaryRed,
+                              ),
+                            ),
+                            Text(
+                              'ROLE: ${role.toUpperCase()}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: kTextMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  const Divider(color: kBorderRed, thickness: 1.5),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'LOKASI UNIT PHOTOBOX',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: kPrimaryRed,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 16, color: kPrimaryRed),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          alamat,
+                          style: const TextStyle(fontSize: 13, color: kTextDark, height: 1.4, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 28),
+                  const Divider(color: kBorderRed, thickness: 1.5),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'MENU NAVIGASI',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: kPrimaryRed,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (role != 'admin')
                     Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: const BoxDecoration(
-                        color: Colors.white12,
-                        shape: BoxShape.circle,
+                      decoration: BoxDecoration(
+                        color: _activeTab == 'dashboard' ? kPrimaryRed : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _activeTab == 'dashboard' ? kPrimaryRed : kBorderRed,
+                        ),
                       ),
-                      child: const Icon(Icons.admin_panel_settings, size: 28, color: Colors.white),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            username.toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
+                      child: ListTile(
+                        dense: true,
+                        leading: Icon(
+                          Icons.tune,
+                          color: _activeTab == 'dashboard' ? Colors.white : kPrimaryRed,
+                        ),
+                        title: Text(
+                          'SETUP PERANGKAT',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: _activeTab == 'dashboard' ? Colors.white : kPrimaryRed,
                           ),
-                          Text(
-                            'ROLE: ${role.toUpperCase()}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.white54,
-                            ),
-                          ),
-                        ],
+                        ),
+                        onTap: () {
+                          setState(() {
+                            _activeTab = 'dashboard';
+                          });
+                        },
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 40),
-                const Divider(color: Colors.white24),
-                const SizedBox(height: 24),
-                const Text(
-                  'LOKASI UNIT PHOTOBOX',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white30,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.location_on_outlined, size: 16, color: Colors.white54),
-                    const SizedBox(width: 8),
-                    Expanded(
+                  if (role == 'admin')
+                    Container(
+                      decoration: BoxDecoration(
+                        color: _activeTab == 'templates' ? kPrimaryRed : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _activeTab == 'templates' ? kPrimaryRed : kBorderRed,
+                        ),
+                      ),
+                      child: ListTile(
+                        dense: true,
+                        leading: Icon(
+                          Icons.layers,
+                          color: _activeTab == 'templates' ? Colors.white : kPrimaryRed,
+                        ),
+                        title: Text(
+                          'KELOLA TEMPLATE',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: _activeTab == 'templates' ? Colors.white : kPrimaryRed,
+                          ),
+                        ),
+                        onTap: () {
+                          setState(() {
+                            _activeTab = 'templates';
+                          });
+                          _loadTemplatesFromDb();
+                        },
+                      ),
+                    ),
+                  const Spacer(),
+                  ElevatedButton.icon(
+                    onPressed: _logout,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: kPrimaryRed,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        side: const BorderSide(color: kPrimaryRed, width: 1.5),
+                      ),
+                    ),
+                    icon: const Icon(Icons.logout, size: 18),
+                    label: const SizedBox(
+                      width: double.infinity,
                       child: Text(
-                        alamat,
-                        style: const TextStyle(fontSize: 13, color: Colors.white70, height: 1.4),
+                        'KELUAR (LOGOUT)',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 32),
-                const Divider(color: Colors.white24),
-                const SizedBox(height: 24),
-                const Text(
-                  'MENU NAVIGASI',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white30,
-                    letterSpacing: 1.2,
                   ),
-                ),
-                const SizedBox(height: 12),
-                if (role != 'admin')
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      Icons.tune, 
-                      color: _activeTab == 'dashboard' ? Colors.white : Colors.white38
-                    ),
-                    title: Text(
-                      'SETUP PERANGKAT',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: _activeTab == 'dashboard' ? Colors.white : Colors.white38
-                      ),
-                    ),
-                    onTap: () {
-                      setState(() {
-                        _activeTab = 'dashboard';
-                      });
-                    },
-                  ),
-                if (role == 'admin')
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      Icons.layers, 
-                      color: _activeTab == 'templates' ? Colors.white : Colors.white38
-                    ),
-                    title: Text(
-                      'KELOLA TEMPLATE',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: _activeTab == 'templates' ? Colors.white : Colors.white38
-                      ),
-                    ),
-                    onTap: () {
-                      setState(() {
-                        _activeTab = 'templates';
-                      });
-                      _loadTemplatesFromDb();
-                    },
-                  ),
-                const Spacer(),
-                ElevatedButton.icon(
-                  onPressed: _logout,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white10,
-                    foregroundColor: Colors.redAccent,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: const BorderSide(color: Colors.redAccent, width: 0.5),
-                    ),
-                  ),
-                  icon: const Icon(Icons.logout, size: 18),
-                  label: const SizedBox(
-                    width: double.infinity,
-                    child: Text(
-                      'KELUAR (LOGOUT)',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-          
+
           // MAIN PANEL (Dashboard or Templates)
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(48.0),
+              padding: const EdgeInsets.all(40.0),
               child: _activeTab == 'dashboard'
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -657,47 +727,63 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   style: TextStyle(
                                     fontSize: 28,
                                     fontWeight: FontWeight.w900,
-                                    color: Colors.white,
+                                    color: kPrimaryRed,
                                     letterSpacing: 1,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Status Sistem: ${_isLoadingDevices ? "Mendeteksi Perangkat..." : "Online & Siap"}',
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     fontSize: 13,
-                                    color: _isLoadingDevices ? Colors.white30 : Colors.white54,
+                                    color: kTextMuted,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
-                            IconButton(
-                              onPressed: _loadSystemDevices,
-                              icon: const Icon(Icons.refresh, color: Colors.white),
-                              tooltip: 'Pindai Ulang Perangkat',
+                            Container(
+                              decoration: BoxDecoration(
+                                color: kSoftRedBg,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: kBorderRed),
+                              ),
+                              child: IconButton(
+                                onPressed: _loadSystemDevices,
+                                icon: const Icon(Icons.refresh, color: kPrimaryRed),
+                                tooltip: 'Pindai Ulang Perangkat',
+                              ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 24),
-                        
+
                         // Card Payment Gateway Switcher
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                           margin: const EdgeInsets.only(bottom: 24),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF161616),
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: Colors.white12),
+                            border: Border.all(color: kPrimaryRed.withAlpha(110), width: 1.5),
+                            boxShadow: [
+                              BoxShadow(
+                                color: kPrimaryRed.withAlpha(18),
+                                blurRadius: 14,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
                           ),
                           child: Row(
                             children: [
                               Container(
                                 padding: const EdgeInsets.all(10),
                                 decoration: BoxDecoration(
-                                  color: Colors.white10,
+                                  color: kSoftRedBg,
                                   borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: kBorderRed),
                                 ),
-                                child: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 22),
+                                child: const Icon(Icons.qr_code_scanner, color: kPrimaryRed, size: 22),
                               ),
                               const SizedBox(width: 16),
                               Column(
@@ -707,25 +793,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     children: [
                                       const Text(
                                         'PAYMENT GATEWAY (QRIS)',
-                                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+                                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 0.5),
                                       ),
                                       const SizedBox(width: 8),
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                         decoration: BoxDecoration(
-                                          color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.redAccent.withAlpha(40) : Colors.blueAccent.withAlpha(40),
+                                          color: kSoftRedBg,
                                           borderRadius: BorderRadius.circular(6),
                                           border: Border.all(
-                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.redAccent : Colors.blueAccent,
+                                            color: kPrimaryRed,
                                             width: 1,
                                           ),
                                         ),
                                         child: Text(
                                           PaymentConfig.activeGateway == PaymentGateway.doku ? 'DOKU (PROD)' : 'MIDTRANS (SANDBOX)',
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                             fontSize: 10,
                                             fontWeight: FontWeight.bold,
-                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.redAccent : Colors.blueAccent,
+                                            color: kPrimaryRed,
                                           ),
                                         ),
                                       ),
@@ -734,16 +820,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   const SizedBox(height: 2),
                                   const Text(
                                     'Pilih penyedia QRIS yang aktif untuk melayani pembayaran sesi booth',
-                                    style: TextStyle(fontSize: 11, color: Colors.white54),
+                                    style: TextStyle(fontSize: 11, color: kTextMuted),
                                   ),
                                 ],
                               ),
                               const Spacer(),
                               Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.black,
+                                  color: kSoftRedBg,
                                   borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.white24),
+                                  border: Border.all(color: kBorderRed),
                                 ),
                                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                                 child: Row(
@@ -758,7 +844,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                         decoration: BoxDecoration(
-                                          color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.white : Colors.transparent,
+                                          color: PaymentConfig.activeGateway == PaymentGateway.doku ? kPrimaryRed : Colors.transparent,
                                           borderRadius: BorderRadius.circular(8),
                                         ),
                                         child: Text(
@@ -766,7 +852,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           style: TextStyle(
                                             fontSize: 12,
                                             fontWeight: FontWeight.bold,
-                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.black : Colors.white70,
+                                            color: PaymentConfig.activeGateway == PaymentGateway.doku ? Colors.white : kPrimaryRed,
                                           ),
                                         ),
                                       ),
@@ -782,7 +868,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                         decoration: BoxDecoration(
-                                          color: PaymentConfig.activeGateway == PaymentGateway.midtrans ? Colors.white : Colors.transparent,
+                                          color: PaymentConfig.activeGateway == PaymentGateway.midtrans ? kPrimaryRed : Colors.transparent,
                                           borderRadius: BorderRadius.circular(8),
                                         ),
                                         child: Text(
@@ -790,7 +876,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           style: TextStyle(
                                             fontSize: 12,
                                             fontWeight: FontWeight.bold,
-                                            color: PaymentConfig.activeGateway == PaymentGateway.midtrans ? Colors.black : Colors.white70,
+                                            color: PaymentConfig.activeGateway == PaymentGateway.midtrans ? Colors.white : kPrimaryRed,
                                           ),
                                         ),
                                       ),
@@ -801,11 +887,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ],
                           ),
                         ),
-                        
+
                         if (_isLoadingDevices)
                           const Expanded(
                             child: Center(
-                              child: CircularProgressIndicator(color: Colors.white),
+                              child: CircularProgressIndicator(color: kPrimaryRed),
                             ),
                           )
                         else
@@ -814,29 +900,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               crossAxisCount: 2,
                               crossAxisSpacing: 24,
                               mainAxisSpacing: 24,
-                              childAspectRatio: 0.65, // Adjusted height to fit live preview and calibration options
+                              childAspectRatio: 0.65,
                               children: [
                                 // Card Setting Kamera
                                 Container(
                                   padding: const EdgeInsets.all(24),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF161616),
+                                    color: Colors.white,
                                     borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: Colors.white12),
+                                    border: Border.all(color: kPrimaryRed.withAlpha(110), width: 1.5),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: kPrimaryRed.withAlpha(18),
+                                        blurRadius: 16,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                    ],
                                   ),
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       const Row(
                                         children: [
-                                          Icon(Icons.camera_alt, color: Colors.white, size: 24),
-                                          const SizedBox(width: 12),
-                                          const Text(
+                                          Icon(Icons.camera_alt, color: kPrimaryRed, size: 24),
+                                          SizedBox(width: 12),
+                                          Text(
                                             'KAMERA UTAMA',
                                             style: TextStyle(
                                               fontSize: 14,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
+                                              fontWeight: FontWeight.w900,
+                                              color: kPrimaryRed,
                                               letterSpacing: 1,
                                             ),
                                           ),
@@ -845,24 +938,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       const SizedBox(height: 16),
                                       const Text(
                                         'Pilih Input Kamera Aktif:',
-                                        style: TextStyle(fontSize: 12, color: Colors.white54),
+                                        style: TextStyle(fontSize: 12, color: kTextMuted, fontWeight: FontWeight.w600),
                                       ),
                                       const SizedBox(height: 8),
                                       DropdownButtonFormField<CameraDescription>(
                                         isExpanded: true,
-                                        dropdownColor: const Color(0xFF161616),
+                                        dropdownColor: Colors.white,
                                         value: _selectedCameraDescription,
-                                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                                        style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.w600),
                                         decoration: InputDecoration(
                                           filled: true,
-                                          fillColor: Colors.black,
-                                          border: OutlineInputBorder(
+                                          fillColor: kSoftRedBg,
+                                          enabledBorder: OutlineInputBorder(
                                             borderRadius: BorderRadius.circular(12),
-                                            borderSide: const BorderSide(color: Colors.white24),
+                                            borderSide: const BorderSide(color: kBorderRed, width: 1.5),
                                           ),
                                           focusedBorder: OutlineInputBorder(
                                             borderRadius: BorderRadius.circular(12),
-                                            borderSide: const BorderSide(color: Colors.white),
+                                            borderSide: const BorderSide(color: kPrimaryRed, width: 2),
                                           ),
                                         ),
                                         items: _cameras.map((camera) {
@@ -878,13 +971,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         },
                                       ),
                                       const SizedBox(height: 20),
-                                      // Real Live Preview inside Settings Screen!
-                                       Expanded(
+                                      // Real Live Preview inside Settings Screen
+                                      Expanded(
                                         child: Container(
                                           decoration: BoxDecoration(
-                                            color: Colors.black,
+                                            color: kSoftRedBg,
                                             borderRadius: BorderRadius.circular(12),
-                                            border: Border.all(color: Colors.white12),
+                                            border: Border.all(color: kBorderRed, width: 1.5),
                                           ),
                                           child: ClipRRect(
                                             borderRadius: BorderRadius.circular(11),
@@ -896,27 +989,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                                         SizedBox(
                                                           width: 30,
                                                           height: 30,
-                                                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                                                          child: CircularProgressIndicator(color: kPrimaryRed, strokeWidth: 2.5),
                                                         ),
                                                         SizedBox(height: 16),
                                                         Text(
                                                           'Menghubungkan ke Kamera...',
-                                                          style: TextStyle(color: Colors.white54, fontSize: 12),
+                                                          style: TextStyle(color: kPrimaryRed, fontSize: 12, fontWeight: FontWeight.w600),
                                                         )
                                                       ],
                                                     ),
                                                   )
                                                 : (_isCameraPreviewInitialized && _previewController != null
                                                     ? CameraPreview(_previewController!)
-                                                    : const Center(
+                                                    : Center(
                                                         child: Column(
                                                           mainAxisAlignment: MainAxisAlignment.center,
                                                           children: [
-                                                            Icon(Icons.videocam_off, color: Colors.white24, size: 36),
-                                                            SizedBox(height: 8),
+                                                            Icon(Icons.videocam_off, color: kPrimaryRed.withAlpha(110), size: 36),
+                                                            const SizedBox(height: 8),
                                                             Text(
                                                               'Preview Tidak Aktif',
-                                                              style: TextStyle(color: Colors.white24, fontSize: 11),
+                                                              style: TextStyle(color: kPrimaryRed.withAlpha(150), fontSize: 11, fontWeight: FontWeight.w600),
                                                             )
                                                           ],
                                                         ),
@@ -927,28 +1020,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ],
                                   ),
                                 ),
-                                
+
                                 // Card Setting Printer
                                 Container(
                                   padding: const EdgeInsets.all(24),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF161616),
+                                    color: Colors.white,
                                     borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(color: Colors.white12),
+                                    border: Border.all(color: kPrimaryRed.withAlpha(110), width: 1.5),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: kPrimaryRed.withAlpha(18),
+                                        blurRadius: 16,
+                                        offset: const Offset(0, 6),
+                                      ),
+                                    ],
                                   ),
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       const Row(
                                         children: [
-                                          Icon(Icons.print, color: Colors.white, size: 24),
-                                          const SizedBox(width: 12),
-                                          const Text(
+                                          Icon(Icons.print, color: kPrimaryRed, size: 24),
+                                          SizedBox(width: 12),
+                                          Text(
                                             'PRINTER UTAMA',
                                             style: TextStyle(
                                               fontSize: 14,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
+                                              fontWeight: FontWeight.w900,
+                                              color: kPrimaryRed,
                                               letterSpacing: 1,
                                             ),
                                           ),
@@ -957,24 +1057,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       const SizedBox(height: 16),
                                       const Text(
                                         'Pilih Printer Cetak Foto:',
-                                        style: TextStyle(fontSize: 12, color: Colors.white54),
+                                        style: TextStyle(fontSize: 12, color: kTextMuted, fontWeight: FontWeight.w600),
                                       ),
                                       const SizedBox(height: 8),
                                       DropdownButtonFormField<String>(
                                         isExpanded: true,
-                                        dropdownColor: const Color(0xFF161616),
+                                        dropdownColor: Colors.white,
                                         value: _selectedPrinter,
-                                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                                        style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.w600),
                                         decoration: InputDecoration(
                                           filled: true,
-                                          fillColor: Colors.black,
-                                          border: OutlineInputBorder(
+                                          fillColor: kSoftRedBg,
+                                          enabledBorder: OutlineInputBorder(
                                             borderRadius: BorderRadius.circular(12),
-                                            borderSide: const BorderSide(color: Colors.white24),
+                                            borderSide: const BorderSide(color: kBorderRed, width: 1.5),
                                           ),
                                           focusedBorder: OutlineInputBorder(
                                             borderRadius: BorderRadius.circular(12),
-                                            borderSide: const BorderSide(color: Colors.white),
+                                            borderSide: const BorderSide(color: kPrimaryRed, width: 2),
                                           ),
                                         ),
                                         items: _printers.map((printer) {
@@ -990,18 +1090,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         },
                                       ),
                                       const SizedBox(height: 20),
-                                      const Divider(color: Colors.white24),
+                                      const Divider(color: kBorderRed, thickness: 1.5),
                                       const SizedBox(height: 12),
                                       const Row(
                                         children: [
-                                          Icon(Icons.tune, color: Colors.white, size: 20),
+                                          Icon(Icons.tune, color: kPrimaryRed, size: 20),
                                           SizedBox(width: 8),
                                           Text(
                                             'KALIBRASI POSISI CETAK',
                                             style: TextStyle(
                                               fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
+                                              fontWeight: FontWeight.w900,
+                                              color: kPrimaryRed,
                                               letterSpacing: 1,
                                             ),
                                           ),
@@ -1016,25 +1116,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                               children: [
                                                 const Text(
                                                   'Horizontal (X) mm',
-                                                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                                                  style: TextStyle(fontSize: 11, color: kTextMuted, fontWeight: FontWeight.w600),
                                                 ),
                                                 const SizedBox(height: 6),
                                                 TextField(
                                                   controller: _offsetXController,
                                                   keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                                  style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.bold),
                                                   decoration: InputDecoration(
                                                     filled: true,
-                                                    fillColor: Colors.black,
+                                                    fillColor: kSoftRedBg,
                                                     isDense: true,
                                                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                                     enabledBorder: OutlineInputBorder(
                                                       borderRadius: BorderRadius.circular(8),
-                                                      borderSide: const BorderSide(color: Colors.white24),
+                                                      borderSide: const BorderSide(color: kBorderRed, width: 1.5),
                                                     ),
                                                     focusedBorder: OutlineInputBorder(
                                                       borderRadius: BorderRadius.circular(8),
-                                                      borderSide: const BorderSide(color: Colors.white),
+                                                      borderSide: const BorderSide(color: kPrimaryRed, width: 2),
                                                     ),
                                                   ),
                                                   onChanged: (val) {
@@ -1053,25 +1153,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                               children: [
                                                 const Text(
                                                   'Vertikal (Y) mm',
-                                                  style: TextStyle(fontSize: 11, color: Colors.white70),
+                                                  style: TextStyle(fontSize: 11, color: kTextMuted, fontWeight: FontWeight.w600),
                                                 ),
                                                 const SizedBox(height: 6),
                                                 TextField(
                                                   controller: _offsetYController,
                                                   keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                                  style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.bold),
                                                   decoration: InputDecoration(
                                                     filled: true,
-                                                    fillColor: Colors.black,
+                                                    fillColor: kSoftRedBg,
                                                     isDense: true,
                                                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                                     enabledBorder: OutlineInputBorder(
                                                       borderRadius: BorderRadius.circular(8),
-                                                      borderSide: const BorderSide(color: Colors.white24),
+                                                      borderSide: const BorderSide(color: kBorderRed, width: 1.5),
                                                     ),
                                                     focusedBorder: OutlineInputBorder(
                                                       borderRadius: BorderRadius.circular(8),
-                                                      borderSide: const BorderSide(color: Colors.white),
+                                                      borderSide: const BorderSide(color: kPrimaryRed, width: 2),
                                                     ),
                                                   ),
                                                   onChanged: (val) {
@@ -1088,7 +1188,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       const SizedBox(height: 12),
                                       const Text(
                                         '* Nilai (+) geser Kanan/Bawah, (-) geser Kiri/Atas.',
-                                        style: TextStyle(fontSize: 10, color: Colors.white38, fontStyle: FontStyle.italic),
+                                        style: TextStyle(fontSize: 10, color: kTextMuted, fontStyle: FontStyle.italic),
                                       ),
                                     ],
                                   ),
@@ -1096,29 +1196,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ],
                             ),
                           ),
-                        
+
                         if (!_isLoadingDevices && role != 'admin')
-                          SizedBox(
+                          Container(
                             width: double.infinity,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(32),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: kDarkRed,
+                                  offset: Offset(0, 5),
+                                  blurRadius: 0,
+                                ),
+                              ],
+                            ),
                             child: ElevatedButton.icon(
                               onPressed: _startSession,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                foregroundColor: Colors.black,
-                                padding: const EdgeInsets.symmetric(vertical: 24),
+                                backgroundColor: kPrimaryRed,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 22),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
+                                  borderRadius: BorderRadius.circular(32),
                                 ),
-                                elevation: 10,
-                                shadowColor: Colors.white.withAlpha(30),
+                                elevation: 0,
                               ),
                               icon: const Icon(Icons.play_circle_fill, size: 28),
                               label: const Text(
                                 'MULAI SESI PHOTOBOX',
                                 style: TextStyle(
                                   fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.5,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2,
                                 ),
                               ),
                             ),
@@ -1140,18 +1249,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   style: const TextStyle(
                                     fontSize: 28,
                                     fontWeight: FontWeight.w900,
-                                    color: Colors.white,
+                                    color: kPrimaryRed,
                                     letterSpacing: 1,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  _isEditingTemplate 
-                                      ? 'Geser dan atur letak 3 foto pada template PNG transparan' 
+                                  _isEditingTemplate
+                                      ? 'Geser dan atur letak 3 foto pada template PNG transparan'
                                       : 'Daftar template cetak bingkai photobox Anda',
                                   style: const TextStyle(
                                     fontSize: 13,
-                                    color: Colors.white54,
+                                    color: kTextMuted,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
@@ -1168,29 +1278,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
   Widget _buildTemplatesList() {
     return Expanded(
       child: _isLoadingTemplates
-          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          ? const Center(child: CircularProgressIndicator(color: kPrimaryRed))
           : (_userTemplates.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.layers_clear_outlined, size: 70, color: Colors.white24),
+                      Icon(Icons.layers_clear_outlined, size: 70, color: kPrimaryRed.withAlpha(100)),
                       const SizedBox(height: 16),
                       const Text(
                         'Belum ada template terdaftar.',
-                        style: TextStyle(color: Colors.white54, fontSize: 14),
+                        style: TextStyle(color: kTextMuted, fontSize: 14, fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 24),
                       ElevatedButton.icon(
                         onPressed: _startNewTemplate,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
+                          backgroundColor: kPrimaryRed,
+                          foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                         ),
                         icon: const Icon(Icons.add),
                         label: const Text('BUAT TEMPLATE BARU', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1206,10 +1317,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ElevatedButton.icon(
                           onPressed: _startNewTemplate,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: Colors.black,
+                            backgroundColor: kPrimaryRed,
+                            foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                           ),
                           icon: const Icon(Icons.add),
                           label: const Text('BUAT TEMPLATE', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1234,18 +1345,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                           return Container(
                             decoration: BoxDecoration(
-                              color: const Color(0xFF161616),
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.white12),
+                              border: Border.all(color: kBorderRed, width: 1.5),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: kPrimaryRed.withAlpha(15),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                // Thumbnail Preview of template
                                 Expanded(
                                   child: Container(
                                     decoration: const BoxDecoration(
-                                      color: Colors.black,
+                                      color: kSoftRedBg,
                                       borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
                                     ),
                                     child: ClipRRect(
@@ -1254,21 +1371,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ),
                                   ),
                                 ),
-                                // Information
                                 Padding(
                                   padding: const EdgeInsets.all(16.0),
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        name,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.white,
-                                          fontSize: 13,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              name,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                color: kTextDark,
+                                                fontSize: 13,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: kSoftRedBg,
+                                              borderRadius: BorderRadius.circular(4),
+                                              border: Border.all(
+                                                color: kPrimaryRed,
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              (template['template_mode'] == 'strip')
+                                                  ? 'STRIP (2X)'
+                                                  : ((template['template_mode'] == 'strip_semi_4r')
+                                                      ? 'SEMI 4R'
+                                                      : '4R'),
+                                              style: const TextStyle(
+                                                color: kPrimaryRed,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                       const SizedBox(height: 6),
                                       FutureBuilder<List<int>>(
@@ -1277,7 +1423,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           if (snapshot.connectionState == ConnectionState.waiting) {
                                             return const SizedBox(
                                               height: 12,
-                                              child: LinearProgressIndicator(color: Colors.white24, backgroundColor: Colors.transparent),
+                                              child: LinearProgressIndicator(color: kPrimaryRed, backgroundColor: Colors.transparent),
                                             );
                                           }
                                           final assignedIds = snapshot.data ?? [];
@@ -1291,7 +1437,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                                           return Text(
                                             'Booths: ${names.isEmpty ? "Tidak ada" : names}',
-                                            style: const TextStyle(fontSize: 10, color: Colors.white38),
+                                            style: const TextStyle(fontSize: 10, color: kTextMuted),
                                             maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
                                           );
@@ -1303,13 +1449,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         child: ElevatedButton.icon(
                                           onPressed: () => _deleteTemplateFromDb(id),
                                           style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.white10,
-                                            foregroundColor: Colors.redAccent,
+                                            backgroundColor: kSoftRedBg,
+                                            foregroundColor: kPrimaryRed,
                                             elevation: 0,
                                             padding: const EdgeInsets.symmetric(vertical: 10),
                                             shape: RoundedRectangleBorder(
                                               borderRadius: BorderRadius.circular(8),
-                                              side: const BorderSide(color: Colors.redAccent, width: 0.5),
+                                              side: const BorderSide(color: kPrimaryRed, width: 1),
                                             ),
                                           ),
                                           icon: const Icon(Icons.delete_outline, size: 16),
@@ -1331,108 +1477,310 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildTemplateDesigner() {
-    // Ukuran kanvas desainer (sesuai rasio kertas 4R: 102 mm x 152 mm)
+    final bool isStripMode = _templateMode == 'strip';
+    final bool isStripSemi4R = _templateMode == 'strip_semi_4r';
     const double designerHeight = 500.0;
-    const double designerWidth = designerHeight * (102.0 / 152.0); // ~335.5 pixels
+    double designerWidth;
+
+    if (_uploadedPngBytes != null) {
+      try {
+        final decoded = img.decodeImage(_uploadedPngBytes!);
+        if (decoded != null && decoded.height > 0) {
+          designerWidth = designerHeight * (decoded.width / decoded.height);
+        } else {
+          designerWidth = isStripMode ? designerHeight * (51.0 / 152.0) : designerHeight * (102.0 / 152.0);
+        }
+      } catch (_) {
+        designerWidth = isStripMode ? designerHeight * (51.0 / 152.0) : designerHeight * (102.0 / 152.0);
+      }
+    } else {
+      designerWidth = isStripMode ? designerHeight * (51.0 / 152.0) : designerHeight * (102.0 / 152.0);
+    }
 
     return Expanded(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Sisi Kiri: Kanvas Visual Interaktif
-          Container(
-            width: designerWidth,
-            height: designerHeight,
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white24, width: 1.5),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14.5),
-              child: Stack(
-                fit: StackFit.expand,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  // 1. Gambar Template PNG Transparan
-                  if (_uploadedPngBytes != null)
-                    Image.memory(_uploadedPngBytes!, fit: BoxFit.fill)
-                  else
-                    const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.image_outlined, size: 50, color: Colors.white24),
-                          SizedBox(height: 12),
-                          Text(
-                            'Silakan pilih file PNG di kanan',
-                            style: TextStyle(color: Colors.white38, fontSize: 13),
-                          )
-                        ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: kSoftRedBg,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: kPrimaryRed),
+                    ),
+                    child: Text(
+                      isStripMode
+                          ? 'KANVAS STRIP (51 mm x 152 mm / Setengah 4R)'
+                          : (isStripSemi4R
+                              ? 'KANVAS STRIP SEMI 4R (102 mm x 152 mm / 6 Foto)'
+                              : 'KANVAS 4R FULL (102 mm x 152 mm)'),
+                      style: const TextStyle(
+                        color: kPrimaryRed,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-
-                  // 2. Slot Foto 1 (Draggable/Resizable)
-                  _buildDraggableSlot(
-                    label: 'FOTO 1 (ATAS)',
-                    color: Colors.blueAccent,
-                    x: _s1x,
-                    y: _s1y,
-                    w: _s1w,
-                    h: _s1h,
-                    canvasW: designerWidth,
-                    canvasH: designerHeight,
-                    onUpdate: (newX, newY, newW, newH) {
-                      setState(() {
-                        _s1x = newX;
-                        _s1y = newY;
-                        _s1w = newW;
-                        _s1h = newH;
-                      });
-                    },
                   ),
-
-                  // 3. Slot Foto 2 (Draggable/Resizable)
-                  _buildDraggableSlot(
-                    label: 'FOTO 2 (TENGAH)',
-                    color: Colors.greenAccent,
-                    x: _s2x,
-                    y: _s2y,
-                    w: _s2w,
-                    h: _s2h,
-                    canvasW: designerWidth,
-                    canvasH: designerHeight,
-                    onUpdate: (newX, newY, newW, newH) {
-                      setState(() {
-                        _s2x = newX;
-                        _s2y = newY;
-                        _s2w = newW;
-                        _s2h = newH;
-                      });
-                    },
-                  ),
-
-                  // 4. Slot Foto 3 (Draggable/Resizable)
-                  _buildDraggableSlot(
-                    label: 'FOTO 3 (BAWAH)',
-                    color: Colors.redAccent,
-                    x: _s3x,
-                    y: _s3y,
-                    w: _s3w,
-                    h: _s3h,
-                    canvasW: designerWidth,
-                    canvasH: designerHeight,
-                    onUpdate: (newX, newY, newW, newH) {
-                      setState(() {
-                        _s3x = newX;
-                        _s3y = newY;
-                        _s3w = newW;
-                        _s3h = newH;
-                      });
-                    },
-                  ),
+                  if (isStripSemi4R) ...[
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          _s4x = (_s1x + 0.5).clamp(0.5, 0.95);
+                          _s4y = _s1y;
+                          _s4w = _s1w;
+                          _s4h = _s1h;
+                          _s5x = (_s2x + 0.5).clamp(0.5, 0.95);
+                          _s5y = _s2y;
+                          _s5w = _s2w;
+                          _s5h = _s2h;
+                          _s6x = (_s3x + 0.5).clamp(0.5, 0.95);
+                          _s6y = _s3y;
+                          _s6w = _s3w;
+                          _s6h = _s3h;
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Posisi slot kanan berhasil disamakan dengan slot kiri!'),
+                            duration: Duration(seconds: 1),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: kSoftRedBg,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: kPrimaryRed, width: 0.8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.copy_rounded, size: 12, color: kPrimaryRed),
+                            SizedBox(width: 4),
+                            Text(
+                              'Samakan Kiri ke Kanan',
+                              style: TextStyle(color: kPrimaryRed, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
-            ),
+              const SizedBox(height: 10),
+              Container(
+                width: designerWidth,
+                height: designerHeight,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF222222),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: kPrimaryRed, width: 2),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14.5),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (_uploadedPngBytes != null)
+                        Image.memory(_uploadedPngBytes!, fit: BoxFit.fill)
+                      else
+                        Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.image_outlined, size: 50, color: Colors.white54),
+                              const SizedBox(height: 12),
+                              Text(
+                                isStripMode
+                                    ? 'Pilih PNG Strip (51 mm x 152 mm) di kanan'
+                                    : (isStripSemi4R
+                                        ? 'Pilih PNG 4R (102 mm x 152 mm) di kanan'
+                                        : 'Silakan pilih file PNG di kanan'),
+                                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                                textAlign: TextAlign.center,
+                              )
+                            ],
+                          ),
+                        ),
+
+                      if (isStripSemi4R)
+                        Positioned(
+                          left: designerWidth * 0.5 - 0.5,
+                          top: 0,
+                          bottom: 0,
+                          width: 1,
+                          child: Container(color: Colors.white38),
+                        ),
+
+                      if (isStripSemi4R)
+                        Positioned(
+                          left: 8,
+                          top: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: kPrimaryRed,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text('Strip Kiri (Utama)', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      if (isStripSemi4R)
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: kDarkRed,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text('Strip Kanan (Manual)', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+
+                      _buildDraggableSlot(
+                        label: isStripSemi4R ? 'FOTO 1 (KIRI)' : 'FOTO 1 (ATAS)',
+                        color: Colors.blueAccent,
+                        x: _s1x,
+                        y: _s1y,
+                        w: _s1w,
+                        h: _s1h,
+                        minX: 0.0,
+                        maxX: isStripSemi4R ? 0.5 : 1.0,
+                        canvasW: designerWidth,
+                        canvasH: designerHeight,
+                        onUpdate: (newX, newY, newW, newH) {
+                          setState(() {
+                            _s1x = newX;
+                            _s1y = newY;
+                            _s1w = newW;
+                            _s1h = newH;
+                          });
+                        },
+                      ),
+
+                      if (isStripSemi4R)
+                        _buildDraggableSlot(
+                          label: 'FOTO 1 (KANAN)',
+                          color: Colors.cyanAccent,
+                          x: _s4x,
+                          y: _s4y,
+                          w: _s4w,
+                          h: _s4h,
+                          minX: 0.5,
+                          maxX: 1.0,
+                          canvasW: designerWidth,
+                          canvasH: designerHeight,
+                          onUpdate: (newX, newY, newW, newH) {
+                            setState(() {
+                              _s4x = newX;
+                              _s4y = newY;
+                              _s4w = newW;
+                              _s4h = newH;
+                            });
+                          },
+                        ),
+
+                      _buildDraggableSlot(
+                        label: isStripSemi4R ? 'FOTO 2 (KIRI)' : 'FOTO 2 (TENGAH)',
+                        color: Colors.greenAccent,
+                        x: _s2x,
+                        y: _s2y,
+                        w: _s2w,
+                        h: _s2h,
+                        minX: 0.0,
+                        maxX: isStripSemi4R ? 0.5 : 1.0,
+                        canvasW: designerWidth,
+                        canvasH: designerHeight,
+                        onUpdate: (newX, newY, newW, newH) {
+                          setState(() {
+                            _s2x = newX;
+                            _s2y = newY;
+                            _s2w = newW;
+                            _s2h = newH;
+                          });
+                        },
+                      ),
+
+                      if (isStripSemi4R)
+                        _buildDraggableSlot(
+                          label: 'FOTO 2 (KANAN)',
+                          color: Colors.limeAccent,
+                          x: _s5x,
+                          y: _s5y,
+                          w: _s5w,
+                          h: _s5h,
+                          minX: 0.5,
+                          maxX: 1.0,
+                          canvasW: designerWidth,
+                          canvasH: designerHeight,
+                          onUpdate: (newX, newY, newW, newH) {
+                            setState(() {
+                              _s5x = newX;
+                              _s5y = newY;
+                              _s5w = newW;
+                              _s5h = newH;
+                            });
+                          },
+                        ),
+
+                      _buildDraggableSlot(
+                        label: isStripSemi4R ? 'FOTO 3 (KIRI)' : 'FOTO 3 (BAWAH)',
+                        color: Colors.redAccent,
+                        x: _s3x,
+                        y: _s3y,
+                        w: _s3w,
+                        h: _s3h,
+                        minX: 0.0,
+                        maxX: isStripSemi4R ? 0.5 : 1.0,
+                        canvasW: designerWidth,
+                        canvasH: designerHeight,
+                        onUpdate: (newX, newY, newW, newH) {
+                          setState(() {
+                            _s3x = newX;
+                            _s3y = newY;
+                            _s3w = newW;
+                            _s3h = newH;
+                          });
+                        },
+                      ),
+
+                      if (isStripSemi4R)
+                        _buildDraggableSlot(
+                          label: 'FOTO 3 (KANAN)',
+                          color: Colors.orangeAccent,
+                          x: _s6x,
+                          y: _s6y,
+                          w: _s6w,
+                          h: _s6h,
+                          minX: 0.5,
+                          maxX: 1.0,
+                          canvasW: designerWidth,
+                          canvasH: designerHeight,
+                          onUpdate: (newX, newY, newW, newH) {
+                            setState(() {
+                              _s6x = newX;
+                              _s6y = newY;
+                              _s6w = newW;
+                              _s6h = newH;
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 48),
 
@@ -1442,9 +1790,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Container(
                 padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF161616),
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: Colors.white12),
+                  border: Border.all(color: kPrimaryRed.withAlpha(110), width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: kPrimaryRed.withAlpha(18),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1453,48 +1808,235 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       'PENGATURAN TEMPLATE BARU',
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        color: kPrimaryRed,
                         letterSpacing: 1.5,
                       ),
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Rancang tata letak 3 slot foto Anda di atas template PNG transparan.',
-                      style: TextStyle(fontSize: 12, color: Colors.white54),
+                      'Pilih mode template dan rancang tata letak 3 slot foto Anda.',
+                      style: TextStyle(fontSize: 12, color: kTextMuted),
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
 
-                    // Input Nama Template
+                    const Text(
+                      'MODE TEMPLATE',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 1),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        // 1. Mode 4R FULL
+                        Expanded(
+                          child: InkWell(
+                            onTap: () {
+                              setState(() {
+                                _templateMode = '4r';
+                                if (_s1w < 0.5) {
+                                  _s1x = 0.1; _s1y = 0.08; _s1w = 0.8; _s1h = 0.25;
+                                  _s2x = 0.1; _s2y = 0.36; _s2w = 0.8; _s2h = 0.25;
+                                  _s3x = 0.1; _s3y = 0.64; _s3w = 0.8; _s3h = 0.25;
+                                }
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: _templateMode == '4r' ? kPrimaryRed : kSoftRedBg,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _templateMode == '4r' ? kPrimaryRed : kBorderRed,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Icon(
+                                    Icons.crop_portrait_rounded,
+                                    color: _templateMode == '4r' ? Colors.white : kPrimaryRed,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '4R FULL',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: _templateMode == '4r' ? Colors.white : kPrimaryRed,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '102x152 mm',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      color: _templateMode == '4r' ? Colors.white70 : kTextMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 2. Mode STRIP 2X
+                        Expanded(
+                          child: InkWell(
+                            onTap: () {
+                              setState(() {
+                                _templateMode = 'strip';
+                                if (_s1w < 0.5) {
+                                  _s1x = 0.1; _s1y = 0.08; _s1w = 0.8; _s1h = 0.25;
+                                  _s2x = 0.1; _s2y = 0.36; _s2w = 0.8; _s2h = 0.25;
+                                  _s3x = 0.1; _s3y = 0.64; _s3w = 0.8; _s3h = 0.25;
+                                }
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: _templateMode == 'strip' ? kPrimaryRed : kSoftRedBg,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _templateMode == 'strip' ? kPrimaryRed : kBorderRed,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Icon(
+                                    Icons.view_column_rounded,
+                                    color: _templateMode == 'strip' ? Colors.white : kPrimaryRed,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'STRIP 2X',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: _templateMode == 'strip' ? Colors.white : kPrimaryRed,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '51x152 mm',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      color: _templateMode == 'strip' ? Colors.white70 : kTextMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 3. Mode STRIP SEMI 4R
+                        Expanded(
+                          child: InkWell(
+                            onTap: () {
+                              setState(() {
+                                _templateMode = 'strip_semi_4r';
+                                if (_s1w > 0.45 || _s1x > 0.45) {
+                                  _s1x = 0.05; _s1y = 0.08; _s1w = 0.40; _s1h = 0.25;
+                                  _s2x = 0.05; _s2y = 0.36; _s2w = 0.40; _s2h = 0.25;
+                                  _s3x = 0.05; _s3y = 0.64; _s3w = 0.40; _s3h = 0.25;
+                                }
+                                if (_s4w > 0.45 || _s4x < 0.50) {
+                                  _s4x = (_s1x + 0.5).clamp(0.5, 0.95); _s4y = _s1y; _s4w = _s1w; _s4h = _s1h;
+                                  _s5x = (_s2x + 0.5).clamp(0.5, 0.95); _s5y = _s2y; _s5w = _s2w; _s5h = _s2h;
+                                  _s6x = (_s3x + 0.5).clamp(0.5, 0.95); _s6y = _s3y; _s6w = _s3w; _s6h = _s6h;
+                                }
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: _templateMode == 'strip_semi_4r' ? kPrimaryRed : kSoftRedBg,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _templateMode == 'strip_semi_4r' ? kPrimaryRed : kBorderRed,
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Column(
+                                children: [
+                                  Icon(
+                                    Icons.flip_rounded,
+                                    color: _templateMode == 'strip_semi_4r' ? Colors.white : kPrimaryRed,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'SEMI 4R',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: _templateMode == 'strip_semi_4r' ? Colors.white : kPrimaryRed,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Upload 4R • 6 Foto',
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      color: _templateMode == 'strip_semi_4r' ? Colors.white70 : kTextMuted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _templateMode == 'strip'
+                          ? '• Desain strip (51 mm x 152 mm). Saat dicetak ke kertas 4R (102 mm x 152 mm), otomatis di-copy kanan-kiri menjadi 2 lembar strip kembar.'
+                          : (_templateMode == 'strip_semi_4r'
+                              ? '• Desain 4R (102 mm x 152 mm) dengan 2 strip (6 foto total). Posisi 3 slot kiri dan 3 slot kanan dapat digeser & disesuaikan ukurannya secara bebas dan manual.'
+                              : '• Desain 4R penuh (102 mm x 152 mm pada kertas foto 4R standar, 3 foto penuh).'),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: kTextMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
                     const Text(
                       'NAMA TEMPLATE',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white30, letterSpacing: 1),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 1),
                     ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _templateNameController,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.w600),
                       decoration: InputDecoration(
-                        hintText: 'Misal: Template Ulang Tahun Pink',
-                        hintStyle: const TextStyle(color: Colors.white24),
+                        hintText: 'Misal: Template Ulang Tahun Merah',
+                        hintStyle: const TextStyle(color: kTextMuted),
                         filled: true,
-                        fillColor: Colors.black,
-                        border: OutlineInputBorder(
+                        fillColor: kSoftRedBg,
+                        enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.white24),
+                          borderSide: const BorderSide(color: kBorderRed, width: 1.5),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Colors.white),
+                          borderSide: const BorderSide(color: kPrimaryRed, width: 2),
                         ),
                       ),
                     ),
                     const SizedBox(height: 24),
 
-                    // File PNG Upload
                     const Text(
                       'GAMBAR OVERLAY PNG (TRANSPARAN)',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white30, letterSpacing: 1),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 1),
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -1503,15 +2045,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                             decoration: BoxDecoration(
-                              color: Colors.black,
+                              color: kSoftRedBg,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.white12),
+                              border: Border.all(color: kBorderRed, width: 1.5),
                             ),
                             child: Text(
                               _uploadedPngFileName.isNotEmpty ? _uploadedPngFileName : 'Belum ada file dipilih',
                               style: TextStyle(
-                                color: _uploadedPngFileName.isNotEmpty ? Colors.white : Colors.white38,
+                                color: _uploadedPngFileName.isNotEmpty ? kTextDark : kTextMuted,
                                 fontSize: 12,
+                                fontWeight: FontWeight.w600,
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
@@ -1521,7 +2064,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ElevatedButton.icon(
                           onPressed: _pickTemplateFile,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white10,
+                            backgroundColor: kPrimaryRed,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                             shape: RoundedRectangleBorder(
@@ -1529,36 +2072,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           icon: const Icon(Icons.file_upload_outlined, size: 18),
-                          label: const Text('PILIH PNG', style: TextStyle(fontSize: 12)),
+                          label: const Text('PILIH PNG', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
                     const SizedBox(height: 24),
 
-                    // Checklist User Booth
                     const Text(
                       'TUGASKAN KE USER BOOTH',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white30, letterSpacing: 1),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 1),
                     ),
                     const SizedBox(height: 8),
                     Container(
                       constraints: const BoxConstraints(maxHeight: 180),
                       decoration: BoxDecoration(
-                        color: Colors.black,
+                        color: kSoftRedBg,
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white12),
+                        border: Border.all(color: kBorderRed, width: 1.5),
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(11),
                         child: _isLoadingBoothUsers
-                            ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                            ? const Center(child: CircularProgressIndicator(color: kPrimaryRed))
                             : _boothUsersList.isEmpty
                                 ? const Center(
                                     child: Padding(
                                       padding: EdgeInsets.all(16.0),
                                       child: Text(
                                         'Tidak ada akun booth terdaftar!',
-                                        style: TextStyle(color: Colors.white38, fontSize: 12),
+                                        style: TextStyle(color: kTextMuted, fontSize: 12),
                                       ),
                                     ),
                                   )
@@ -1575,15 +2117,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                                       return CheckboxListTile(
                                         value: isChecked,
-                                        activeColor: Colors.white,
-                                        checkColor: Colors.black,
+                                        activeColor: kPrimaryRed,
+                                        checkColor: Colors.white,
                                         title: Text(
                                           name,
-                                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                          style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.bold),
                                         ),
                                         subtitle: Text(
                                           alamat,
-                                          style: const TextStyle(color: Colors.white38, fontSize: 11),
+                                          style: const TextStyle(color: kTextMuted, fontSize: 11),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
@@ -1602,33 +2144,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   ),
                       ),
                     ),
-                    const SizedBox(height: 32),
-                    const Divider(color: Colors.white24),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 28),
+                    const Divider(color: kBorderRed, thickness: 1.5),
+                    const SizedBox(height: 20),
 
-                    // Manual Coordinates Info/Guide
                     const Text(
                       'PETUNJUK EDITOR:',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white30, letterSpacing: 1),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: kPrimaryRed, letterSpacing: 1),
                     ),
                     const SizedBox(height: 8),
                     const BulletPoint(text: 'Geser/drag box berwarna untuk memindahkan posisi slot foto.'),
                     const BulletPoint(text: 'Tarik lingkaran putih kecil di ujung kanan-bawah box untuk mengubah ukuran slot.'),
                     const BulletPoint(text: 'Gunakan PNG transparan agar foto di belakangnya terlihat.'),
-                    const SizedBox(height: 48),
+                    const SizedBox(height: 36),
 
-                    // Action Buttons (Save/Cancel)
                     Row(
                       children: [
                         Expanded(
                           child: OutlinedButton(
                             onPressed: _cancelEditingTemplate,
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.redAccent,
-                              side: const BorderSide(color: Colors.redAccent, width: 0.5),
+                              foregroundColor: kPrimaryRed,
+                              side: const BorderSide(color: kPrimaryRed, width: 1.5),
                               padding: const EdgeInsets.symmetric(vertical: 18),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(24),
                               ),
                             ),
                             child: const Text('BATAL', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1639,11 +2179,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: ElevatedButton(
                             onPressed: _saveTemplateToDb,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black,
+                              backgroundColor: kPrimaryRed,
+                              foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 18),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(24),
                               ),
                             ),
                             child: const Text('SIMPAN LAYOUT', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1671,6 +2211,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required double canvasW,
     required double canvasH,
     required Function(double x, double y, double w, double h) onUpdate,
+    double minX = 0.0,
+    double maxX = 1.0,
   }) {
     final double left = x * canvasW;
     final double top = y * canvasH;
@@ -1689,7 +2231,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final double newX = (left + details.delta.dx) / canvasW;
               final double newY = (top + details.delta.dy) / canvasH;
               onUpdate(
-                newX.clamp(0.0, 1.0 - w),
+                newX.clamp(minX, maxX - w),
                 newY.clamp(0.0, 1.0 - h),
                 w,
                 h,
@@ -1697,7 +2239,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
             child: Container(
               decoration: BoxDecoration(
-                color: color.withAlpha(20),
+                color: color.withAlpha(35),
                 border: Border.all(color: color, width: 2),
                 borderRadius: BorderRadius.circular(6),
               ),
@@ -1724,7 +2266,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onUpdate(
                 x,
                 y,
-                newW.clamp(0.05, 1.0 - x),
+                newW.clamp(0.05, maxX - x),
                 newH.clamp(0.05, 1.0 - y),
               );
             },
@@ -1763,8 +2305,8 @@ class BulletPoint extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('• ', style: TextStyle(color: Colors.white54, fontSize: 13)),
-          Expanded(child: Text(text, style: const TextStyle(color: Colors.white54, fontSize: 12))),
+          const Text('• ', style: TextStyle(color: Color(0xFFD3242B), fontSize: 13, fontWeight: FontWeight.bold)),
+          Expanded(child: Text(text, style: const TextStyle(color: Color(0xFF7A6869), fontSize: 12))),
         ],
       ),
     );
@@ -1773,17 +2315,24 @@ class BulletPoint extends StatelessWidget {
 
 class ImageCropDialog extends StatefulWidget {
   final Uint8List imageBytes;
-  const ImageCropDialog({super.key, required this.imageBytes});
+  final String templateMode;
+
+  const ImageCropDialog({
+    super.key,
+    required this.imageBytes,
+    this.templateMode = '4r',
+  });
 
   @override
   State<ImageCropDialog> createState() => _ImageCropDialogState();
 }
 
 class _ImageCropDialogState extends State<ImageCropDialog> {
+  static const Color kPrimaryRed = Color(0xFFD3242B);
+
   img.Image? _decodedImage;
   bool _isDecoding = true;
 
-  // Crop frame dimensions in absolute pixels relative to display container
   double cropLeft = 0;
   double cropTop = 0;
   double cropWidth = 100;
@@ -1794,6 +2343,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
 
   double containerW = 0;
   double containerH = 0;
+  double _activeTargetRatio = 102.0 / 152.0;
 
   @override
   void initState() {
@@ -1804,10 +2354,6 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
   Future<void> _decodeImage() async {
     try {
       final decoded = img.decodeImage(widget.imageBytes);
-      if (decoded != null) {
-        // Automatically make sure the image is in PNG format internally
-        // (the image library handles it when we re-encode to PNG)
-      }
       if (mounted) {
         setState(() {
           _decodedImage = decoded;
@@ -1819,7 +2365,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Gagal membaca gambar PNG'), backgroundColor: Colors.redAccent),
+          const SnackBar(content: Text('Gagal membaca gambar PNG'), backgroundColor: kPrimaryRed),
         );
       }
     }
@@ -1829,17 +2375,21 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
     if (_initialized) return;
     _initialized = true;
 
-    final double targetRatio = 102.0 / 152.0;
     final double imgRatio = displayW / displayH;
+    if (widget.templateMode == 'strip') {
+      _activeTargetRatio = 51.0 / 152.0;
+    } else {
+      _activeTargetRatio = 102.0 / 152.0;
+    }
 
-    if (imgRatio > targetRatio) {
+    if (imgRatio > _activeTargetRatio) {
       cropHeight = displayH * 0.9;
-      cropWidth = cropHeight * targetRatio;
+      cropWidth = cropHeight * _activeTargetRatio;
       cropLeft = (displayW - cropWidth) / 2;
       cropTop = (displayH - cropHeight) / 2;
     } else {
       cropWidth = displayW * 0.9;
-      cropHeight = cropWidth / targetRatio;
+      cropHeight = cropWidth / _activeTargetRatio;
       cropLeft = (displayW - cropWidth) / 2;
       cropTop = (displayH - cropHeight) / 2;
     }
@@ -1860,7 +2410,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
         final int cropX = (cropLeft * scaleX).round().clamp(0, _decodedImage!.width - 1);
         final int cropY = (cropTop * scaleY).round().clamp(0, _decodedImage!.height - 1);
         final int cropW = (cropWidth * scaleX).round().clamp(1, _decodedImage!.width - cropX);
-        final int cropH = (cropHeight * scaleY).round().clamp(1, _decodedImage!.height - cropY);
+        final int cropH = (cropHeight * scaleY).round().clamp(1, _decodedImage!.height - 1);
 
         final croppedImage = img.copyCrop(
           _decodedImage!,
@@ -1870,10 +2420,13 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
           height: cropH,
         );
 
-        // Downscale image if it is too high resolution to prevent MySQL max_allowed_packet socket errors
         var finalImage = croppedImage;
-        if (croppedImage.height > 1200) {
-          finalImage = img.copyResize(croppedImage, height: 1200);
+        if (croppedImage.height > 2400) {
+          finalImage = img.copyResize(
+            croppedImage,
+            height: 2400,
+            interpolation: img.Interpolation.cubic,
+          );
         }
 
         final croppedBytes = Uint8List.fromList(img.encodePng(finalImage));
@@ -1887,7 +2440,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
             _isCropping = false;
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gagal melakukan crop: $e'), backgroundColor: Colors.redAccent),
+            SnackBar(content: Text('Gagal melakukan crop: $e'), backgroundColor: kPrimaryRed),
           );
         }
       }
@@ -1897,8 +2450,11 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: const Color(0xFF161616),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: const BorderSide(color: kPrimaryRed, width: 2),
+      ),
       child: Container(
         width: 800,
         height: 650,
@@ -1908,9 +2464,9 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    CircularProgressIndicator(color: Colors.white),
+                    CircularProgressIndicator(color: kPrimaryRed),
                     SizedBox(height: 16),
-                    Text('Mendekode gambar PNG...', style: TextStyle(color: Colors.white70)),
+                    Text('Mendekode gambar PNG...', style: TextStyle(color: kPrimaryRed, fontWeight: FontWeight.w600)),
                   ],
                 ),
               )
@@ -1920,27 +2476,35 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Column(
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'CROP TEMPLATE OVERLAY (4R)',
-                            style: TextStyle(
+                            widget.templateMode == 'strip'
+                                ? 'CROP TEMPLATE STRIP (51 mm x 152 mm)'
+                                : (widget.templateMode == 'strip_semi_4r'
+                                    ? 'CROP TEMPLATE STRIP SEMI 4R (102 mm x 152 mm)'
+                                    : 'CROP TEMPLATE OVERLAY (4R)'),
+                            style: const TextStyle(
                               fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              color: kPrimaryRed,
                               letterSpacing: 1,
                             ),
                           ),
-                          SizedBox(height: 4),
+                          const SizedBox(height: 4),
                           Text(
-                            'Sesuaikan bingkai ke rasio 4R (102 mm x 152 mm / Portrait)',
-                            style: TextStyle(fontSize: 12, color: Colors.white54),
+                            widget.templateMode == 'strip'
+                                ? 'Sesuaikan bingkai ke rasio Strip (51 mm x 152 mm / Setengah 4R)'
+                                : (widget.templateMode == 'strip_semi_4r'
+                                    ? 'Sesuaikan bingkai ke rasio 4R (102 mm x 152 mm / 6 Foto Mirror)'
+                                    : 'Sesuaikan bingkai ke rasio 4R (102 mm x 152 mm / Portrait)'),
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF7A6869)),
                           ),
                         ],
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white60),
+                        icon: const Icon(Icons.close, color: kPrimaryRed),
                         onPressed: () => Navigator.pop(context),
                       ),
                     ],
@@ -2022,11 +2586,11 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                                     },
                                     child: Container(
                                       decoration: BoxDecoration(
-                                        border: Border.all(color: Colors.white, width: 2),
+                                        border: Border.all(color: kPrimaryRed, width: 2.5),
                                         color: Colors.transparent,
                                       ),
                                       child: const Center(
-                                        child: Icon(Icons.drag_indicator, color: Colors.white54, size: 24),
+                                        child: Icon(Icons.drag_indicator, color: Colors.white70, size: 24),
                                       ),
                                     ),
                                   ),
@@ -2039,7 +2603,7 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                                     onPanUpdate: (details) {
                                       setState(() {
                                         final double newWidth = (cropWidth + details.delta.dx).clamp(40.0, displayW - cropLeft);
-                                        final double newHeight = newWidth / (102.0 / 152.0);
+                                        final double newHeight = newWidth / _activeTargetRatio;
                                         if (cropTop + newHeight <= displayH) {
                                           cropWidth = newWidth;
                                           cropHeight = newHeight;
@@ -2052,14 +2616,14 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                                         width: 24,
                                         height: 24,
                                         decoration: const BoxDecoration(
-                                          color: Colors.white,
+                                          color: kPrimaryRed,
                                           shape: BoxShape.circle,
                                           boxShadow: [
                                             BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2)),
                                           ],
                                         ),
                                         child: const Center(
-                                          child: Icon(Icons.open_in_full, size: 12, color: Colors.black),
+                                          child: Icon(Icons.open_in_full, size: 12, color: Colors.white),
                                         ),
                                       ),
                                     ),
@@ -2079,27 +2643,27 @@ class _ImageCropDialogState extends State<ImageCropDialog> {
                       OutlinedButton(
                         onPressed: () => Navigator.pop(context),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                          side: const BorderSide(color: Colors.white24),
+                          foregroundColor: kPrimaryRed,
+                          side: const BorderSide(color: kPrimaryRed, width: 1.5),
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                         ),
-                        child: const Text('Batal'),
+                        child: const Text('Batal', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                       const SizedBox(width: 16),
                       ElevatedButton(
                         onPressed: _isCropping ? null : () => _onCropConfirmed(containerW, containerH),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
+                          backgroundColor: kPrimaryRed,
+                          foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
                         ),
                         child: _isCropping
                             ? const SizedBox(
                                 width: 20,
                                 height: 20,
-                                child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                               )
                             : const Text('Terapkan Crop', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),

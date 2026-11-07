@@ -10,11 +10,27 @@ import 'package:pointycastle/digests/sha256.dart';
 class DokuService {
   static Map<String, dynamic>? _keysCache;
 
+  static File? _resolveFile(String fileName) {
+    final cwdFile = File(fileName);
+    if (cwdFile.existsSync()) return cwdFile;
+    try {
+      Directory dir = File(Platform.resolvedExecutable).parent;
+      for (int i = 0; i < 6; i++) {
+        final candidate = File('${dir.path}${Platform.pathSeparator}$fileName');
+        if (candidate.existsSync()) return candidate;
+        final parent = dir.parent;
+        if (parent.path == dir.path) break;
+        dir = parent;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   static void _ensureKeysLoaded() {
     if (_keysCache != null) return;
     try {
-      final file = File('payment_keys.json');
-      if (file.existsSync()) {
+      final file = _resolveFile('payment_keys.json');
+      if (file != null) {
         final data = jsonDecode(file.readAsStringSync());
         _keysCache = data['doku'] as Map<String, dynamic>? ?? {};
       } else {
@@ -73,12 +89,12 @@ class DokuService {
   static RSAPrivateKey? _getPrivateKey() {
     if (_cachedPrivateKey != null) return _cachedPrivateKey;
     try {
-      final file = File(rsaPrivateKeyFile);
-      if (!file.existsSync()) {
+      final file = _resolveFile(rsaPrivateKeyFile);
+      if (file == null) {
         debugPrint('File RSA Private Key tidak ditemukan: $rsaPrivateKeyFile');
         return null;
       }
-      final pem = file.readAsStringSync();
+      final String pem = file.readAsStringSync();
       final lines = pem.split('\n').where((l) => !l.startsWith('---') && l.trim().isNotEmpty).join();
       final der = base64Decode(lines);
       final p = ASN1Parser(der);
@@ -96,6 +112,13 @@ class DokuService {
       debugPrint('Error parsing RSA private key: $e');
       return null;
     }
+  }
+
+  /// Pre-warm token B2B di background agar saat user klik bayar QRIS langsung instan
+  static Future<void> prewarmToken() async {
+    try {
+      await _getAccessToken();
+    } catch (_) {}
   }
 
   /// Mendapatkan Access Token SNAP B2B (dengan caching selama masih valid)
