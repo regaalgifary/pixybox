@@ -182,8 +182,9 @@ class _SessionScreenState extends State<SessionScreen> {
   Future<void> _initCamera() async {
     await Future.delayed(const Duration(milliseconds: 1500));
 
+    // Gunakan veryHigh (Full HD 1080p @ 30fps) agar preview 30fps mulus, pencahayaan/exposure stabil,
+    // dan hasil foto tajam tanpa masuk ke mode still/YUY2 15fps bawaan ResolutionPreset.max.
     final List<ResolutionPreset> presets = [
-      ResolutionPreset.max,
       ResolutionPreset.veryHigh,
       ResolutionPreset.high,
     ];
@@ -829,10 +830,6 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   Future<void> _snapPhoto() async {
-    setState(() {
-      _isFlashActive = true;
-    });
-
     XFile? file;
     try {
       if (_cameraController != null && _cameraController!.value.isInitialized) {
@@ -840,6 +837,12 @@ class _SessionScreenState extends State<SessionScreen> {
       }
     } catch (e) {
       debugPrint("Gagal menjepret gambar: $e");
+    }
+
+    if (mounted) {
+      setState(() {
+        _isFlashActive = true;
+      });
     }
 
     file ??= XFile('');
@@ -891,188 +894,15 @@ class _SessionScreenState extends State<SessionScreen> {
     _fetchTemplates();
   }
 
-  Future<void> _renderAndUploadSoftfile(
-    List<img.Image> processedSelectedPhotos,
-    Map<int, Uint8List> preProcessedByCaptureIndex,
+  Future<void> _prepareAndUploadSoftfileAfterPrint(
+    Map<String, dynamic> uploadJobData,
+    String safeCode,
   ) async {
-    final String rawOrderId = _currentOrderId ?? 'PB-${widget.user['id_user']}-${DateTime.now().millisecondsSinceEpoch}';
-    final String safeCode = rawOrderId.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '');
-    _currentOrderId = safeCode;
-
-    if (mounted) {
-      setState(() {
-        _isUploadingSoftfile = true;
-        _isSoftfileUploaded = false;
-        _softfileDownloadUrl = null;
-      });
-    }
-
     try {
-      // Siapkan kelima foto hasil jepretan (_capturedPhotos 1..5) sesuai pilihan Mirror/No Mirror & Filter
-      final List<Uint8List> allCapturedJpgBytes = [];
-      final effectiveMatrix = _getEffectiveColorMatrix();
-      final bool needsFilter =
-          (_selectedFilterId != 'normal' && _filterIntensity > 0.0) || _photoBrightness != 0.0;
-
-      for (int i = 0; i < _capturedPhotos.length; i++) {
-        if (preProcessedByCaptureIndex.containsKey(i)) {
-          allCapturedJpgBytes.add(preProcessedByCaptureIndex[i]!);
-          continue;
-        }
-        final f = File(_capturedPhotos[i].path);
-        if (await f.exists()) {
-          final bytes = await f.readAsBytes();
-          try {
-            final decoded = img.decodeImage(bytes);
-            if (decoded != null) {
-              if (_isCameraMirrored) {
-                img.flipHorizontal(decoded);
-              }
-              if (needsFilter) {
-                applyColorMatrixToImage(decoded, effectiveMatrix);
-              }
-              allCapturedJpgBytes.add(Uint8List.fromList(img.encodeJpg(decoded, quality: 98)));
-            } else {
-              allCapturedJpgBytes.add(bytes);
-            }
-          } catch (_) {
-            allCapturedJpgBytes.add(bytes);
-          }
-        }
-      }
-
-      img.Image? templateOverlay;
-      int canvasW = 1600;
-      int canvasH = 2400;
-
-      if (_selectedTemplate != null && _selectedTemplate!['image_data'] != null) {
-        final Uint8List tplBytes = _selectedTemplate!['image_data'] as Uint8List;
-        templateOverlay = img.decodeImage(tplBytes);
-        if (templateOverlay != null && templateOverlay.width > 0 && templateOverlay.height > 0) {
-          if (templateOverlay.height < 2400) {
-            final double aspect = templateOverlay.width / templateOverlay.height;
-            canvasH = 2400;
-            canvasW = (canvasH * aspect).round().clamp(1, 4800);
-            templateOverlay = img.copyResize(
-              templateOverlay,
-              width: canvasW,
-              height: canvasH,
-              interpolation: img.Interpolation.cubic,
-            );
-          } else {
-            canvasW = templateOverlay.width;
-            canvasH = templateOverlay.height;
-          }
-        }
-      }
-
-      final img.Image canvas = img.Image(width: canvasW, height: canvasH, numChannels: 4);
-      img.fill(canvas, color: img.ColorRgba8(255, 255, 255, 255));
-
-      void drawPhotoSlot(img.Image src, double sx, double sy, double sw, double sh) {
-        final int dx = (sx * canvasW).round();
-        final int dy = (sy * canvasH).round();
-        final int dw = (sw * canvasW).round().clamp(1, canvasW);
-        final int dh = (sh * canvasH).round().clamp(1, canvasH);
-
-        final double targetAspect = dw / dh;
-        final double srcAspect = src.width / src.height;
-        int cropW = src.width;
-        int cropH = src.height;
-        int cropX = 0;
-        int cropY = 0;
-
-        if (srcAspect > targetAspect) {
-          cropW = (src.height * targetAspect).round().clamp(1, src.width);
-          cropX = ((src.width - cropW) / 2).round();
-        } else {
-          cropH = (src.width / targetAspect).round().clamp(1, src.height);
-          cropY = ((src.height - cropH) / 2).round();
-        }
-
-        final img.Image cropped = img.copyCrop(src, x: cropX, y: cropY, width: cropW, height: cropH);
-        final img.Image resized = img.copyResize(
-          cropped,
-          width: dw,
-          height: dh,
-          interpolation: img.Interpolation.cubic,
-        );
-        img.compositeImage(canvas, resized, dstX: dx, dstY: dy);
-      }
-
-      if (_selectedTemplate != null) {
-        final t = _selectedTemplate!;
-        final double s1x = (t['slot1_x'] as num).toDouble();
-        final double s1y = (t['slot1_y'] as num).toDouble();
-        final double s1w = (t['slot1_w'] as num).toDouble();
-        final double s1h = (t['slot1_h'] as num).toDouble();
-
-        final double s2x = (t['slot2_x'] as num).toDouble();
-        final double s2y = (t['slot2_y'] as num).toDouble();
-        final double s2w = (t['slot2_w'] as num).toDouble();
-        final double s2h = (t['slot2_h'] as num).toDouble();
-
-        final double s3x = (t['slot3_x'] as num).toDouble();
-        final double s3y = (t['slot3_y'] as num).toDouble();
-        final double s3w = (t['slot3_w'] as num).toDouble();
-        final double s3H = (t['slot3_h'] as num).toDouble();
-
-        if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], s1x, s1y, s1w, s1h);
-        if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], s2x, s2y, s2w, s2h);
-        if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], s3x, s3y, s3w, s3H);
-
-        if (t['template_mode'] == 'strip_semi_4r') {
-          final double s4x = ((t['slot4_x'] ?? (s1x + 0.5)) as num).toDouble();
-          final double s4y = ((t['slot4_y'] ?? s1y) as num).toDouble();
-          final double s4w = ((t['slot4_w'] ?? s1w) as num).toDouble();
-          final double s4h = ((t['slot4_h'] ?? s1h) as num).toDouble();
-
-          final double s5x = ((t['slot5_x'] ?? (s2x + 0.5)) as num).toDouble();
-          final double s5y = ((t['slot5_y'] ?? s2y) as num).toDouble();
-          final double s5w = ((t['slot5_w'] ?? s2w) as num).toDouble();
-          final double s5h = ((t['slot5_h'] ?? s2h) as num).toDouble();
-
-          final double s6x = ((t['slot6_x'] ?? (s3x + 0.5)) as num).toDouble();
-          final double s6y = ((t['slot6_y'] ?? s3y) as num).toDouble();
-          final double s6w = ((t['slot6_w'] ?? s3w) as num).toDouble();
-          final double s6h = ((t['slot6_h'] ?? s3H) as num).toDouble();
-
-          if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], s4x, s4y, s4w, s4h);
-          if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], s5x, s5y, s5w, s5h);
-          if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], s6x, s6y, s6w, s6h);
-        }
-
-        if (templateOverlay != null) {
-          img.compositeImage(canvas, templateOverlay, dstX: 0, dstY: 0);
-        }
-      } else {
-        if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], 0.06, 0.04, 0.88, 0.28);
-        if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], 0.06, 0.36, 0.88, 0.28);
-        if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], 0.06, 0.68, 0.88, 0.28);
-      }
-
-      final Uint8List compositeBytes = Uint8List.fromList(img.encodeJpg(canvas, quality: 98));
-      final activePreset = kPhotoFilterPresets.firstWhere(
-        (p) => p.id == _selectedFilterId,
-        orElse: () => kPhotoFilterPresets.first,
+      final Map<String, dynamic> payload = await compute(
+        _prepareSoftfilePayloadIsolate,
+        uploadJobData,
       );
-
-      final Map<String, dynamic> payload = {
-        'order_id': safeCode,
-        'id_user': widget.user['id_user'] ?? 1,
-        'template_name': _selectedTemplate?['name'] ?? 'Polos',
-        'filter_name': activePreset.name,
-        'print_count': _selectedPrintCount,
-        'total_price': _price,
-        'payment_status': _paymentStatus,
-        'composite_base64': base64Encode(compositeBytes),
-        if (allCapturedJpgBytes.isNotEmpty) 'photo1_base64': base64Encode(allCapturedJpgBytes[0]),
-        if (allCapturedJpgBytes.length > 1) 'photo2_base64': base64Encode(allCapturedJpgBytes[1]),
-        if (allCapturedJpgBytes.length > 2) 'photo3_base64': base64Encode(allCapturedJpgBytes[2]),
-        if (allCapturedJpgBytes.length > 3) 'photo4_base64': base64Encode(allCapturedJpgBytes[3]),
-        if (allCapturedJpgBytes.length > 4) 'photo5_base64': base64Encode(allCapturedJpgBytes[4]),
-      };
-
       _lastSoftfilePayload = payload;
       await _sendSoftfilePayload(payload, safeCode);
     } catch (e) {
@@ -1087,13 +917,14 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   Future<void> _sendSoftfilePayload(Map<String, dynamic> payload, String safeCode) async {
+    final String bodyJson = payload['_encoded_json'] as String? ?? jsonEncode(payload);
     for (int attempt = 1; attempt <= 2; attempt++) {
       try {
         final response = await http
             .post(
               Uri.parse('http://pixyboxstudio.biz.id/?path=/api/upload-softfile'),
               headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(payload),
+              body: bodyJson,
             )
             .timeout(const Duration(seconds: 40));
 
@@ -1138,47 +969,75 @@ class _SessionScreenState extends State<SessionScreen> {
   }
 
   Future<void> _triggerRealPrint() async {
+    final String rawOrderId = _currentOrderId ?? 'PB-${widget.user['id_user']}-${DateTime.now().millisecondsSinceEpoch}';
+    final String safeCode = rawOrderId.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '');
+    _currentOrderId = safeCode;
+
     setState(() {
       _currentStage = 'PRINTING';
+      _isUploadingSoftfile = true;
+      _isSoftfileUploaded = false;
+      _softfileDownloadUrl = null;
     });
 
     try {
-      List<pw.MemoryImage> pdfImages = [];
-      List<img.Image> processedImgList = [];
-      Map<int, Uint8List> preProcessedByCaptureIndex = {};
       final effectiveMatrix = _getEffectiveColorMatrix();
       final bool needsFilter =
           (_selectedFilterId != 'normal' && _filterIntensity > 0.0) || _photoBrightness != 0.0;
+      final activePreset = kPhotoFilterPresets.firstWhere(
+        (p) => p.id == _selectedFilterId,
+        orElse: () => kPhotoFilterPresets.first,
+      );
 
-      for (final int captureIdx in _selectedPhotosIndices) {
-        final f = File(_capturedPhotos[captureIdx].path);
-        if (await f.exists()) {
-          final bytes = await f.readAsBytes();
-          try {
-            final decoded = img.decodeImage(bytes);
-            if (decoded != null) {
-              if (_isCameraMirrored) {
-                img.flipHorizontal(decoded);
-              }
-              if (needsFilter) {
-                applyColorMatrixToImage(decoded, effectiveMatrix);
-              }
-              final flippedBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: 100));
-              processedImgList.add(decoded);
-              preProcessedByCaptureIndex[captureIdx] = flippedBytes;
-              pdfImages.add(pw.MemoryImage(flippedBytes));
-            } else {
-              pdfImages.add(pw.MemoryImage(bytes));
-            }
-          } catch (e) {
-            debugPrint('Error processing/mirroring print image: $e');
-            pdfImages.add(pw.MemoryImage(bytes));
-          }
-        }
+      Map<String, dynamic>? isolateTemplate;
+      if (_selectedTemplate != null) {
+        final t = _selectedTemplate!;
+        isolateTemplate = {
+          'name': t['name'],
+          'template_mode': t['template_mode'],
+          'image_data': t['image_data'],
+          'slot1_x': t['slot1_x'],
+          'slot1_y': t['slot1_y'],
+          'slot1_w': t['slot1_w'],
+          'slot1_h': t['slot1_h'],
+          'slot2_x': t['slot2_x'],
+          'slot2_y': t['slot2_y'],
+          'slot2_w': t['slot2_w'],
+          'slot2_h': t['slot2_h'],
+          'slot3_x': t['slot3_x'],
+          'slot3_y': t['slot3_y'],
+          'slot3_w': t['slot3_w'],
+          'slot3_h': t['slot3_h'],
+          'slot4_x': t['slot4_x'],
+          'slot4_y': t['slot4_y'],
+          'slot4_w': t['slot4_w'],
+          'slot4_h': t['slot4_h'],
+          'slot5_x': t['slot5_x'],
+          'slot5_y': t['slot5_y'],
+          'slot5_w': t['slot5_w'],
+          'slot5_h': t['slot5_h'],
+          'slot6_x': t['slot6_x'],
+          'slot6_y': t['slot6_y'],
+          'slot6_w': t['slot6_w'],
+          'slot6_h': t['slot6_h'],
+        };
       }
 
-      // Render composite template image & upload all 5 raw photos + composite softfile asynchronously
-      unawaited(_renderAndUploadSoftfile(processedImgList, preProcessedByCaptureIndex));
+      // TAHAP 1 (CETAK DULU): Render hanya komposit 3 foto terpilih di background isolate
+      // agar printer bisa langsung mencetak secepat mungkin tanpa menunggu proses 5 foto softfile.
+      final Uint8List compositeBytes = await compute(
+        _renderPrintCompositeOnlyIsolate,
+        <String, dynamic>{
+          'photoPaths': _capturedPhotos.map((p) => p.path).toList(),
+          'selectedIndices': List<int>.from(_selectedPhotosIndices),
+          'isCameraMirrored': _isCameraMirrored,
+          'needsFilter': needsFilter,
+          'colorMatrix': effectiveMatrix,
+          'template': isolateTemplate,
+        },
+      );
+
+      final pw.MemoryImage compositePdfImage = pw.MemoryImage(compositeBytes);
 
       final printers = await Printing.listPrinters();
       Printer? targetPrinter;
@@ -1194,7 +1053,6 @@ class _SessionScreenState extends State<SessionScreen> {
       );
 
       final bool isStripMode = _selectedTemplate?['template_mode'] == 'strip';
-      final bool isStripSemi4R = _selectedTemplate?['template_mode'] == 'strip_semi_4r';
       bool isLandscapeStrip = false;
       if (isStripMode && _selectedTemplate?['image_data'] != null) {
         final imgData = _selectedTemplate!['image_data'] as Uint8List;
@@ -1212,6 +1070,7 @@ class _SessionScreenState extends State<SessionScreen> {
           ? const PdfPageFormat(152 * PdfPageFormat.mm, 102 * PdfPageFormat.mm, marginAll: 0)
           : const PdfPageFormat(102 * PdfPageFormat.mm, 152 * PdfPageFormat.mm, marginAll: 0);
 
+      // Kirim perintah cetak ke printer terlebih dahulu
       await Printing.directPrintPdf(
         printer: targetPrinter,
         format: pageFormat4R,
@@ -1240,171 +1099,6 @@ class _SessionScreenState extends State<SessionScreen> {
           final double leftOffset = baseX + (_printOffsetX * PdfPageFormat.mm);
           final double topOffset = baseY + (_printOffsetY * PdfPageFormat.mm);
 
-          pw.Widget buildPdfStripContent(double sW, double sH) {
-            final t = _selectedTemplate!;
-            final double s1x = (t['slot1_x'] as num).toDouble();
-            final double s1y = (t['slot1_y'] as num).toDouble();
-            final double s1w = (t['slot1_w'] as num).toDouble();
-            final double s1h = (t['slot1_h'] as num).toDouble();
-
-            final double s2x = (t['slot2_x'] as num).toDouble();
-            final double s2y = (t['slot2_y'] as num).toDouble();
-            final double s2w = (t['slot2_w'] as num).toDouble();
-            final double s2h = (t['slot2_h'] as num).toDouble();
-
-            final double s3x = (t['slot3_x'] as num).toDouble();
-            final double s3y = (t['slot3_y'] as num).toDouble();
-            final double s3w = (t['slot3_w'] as num).toDouble();
-            final double s3h = (t['slot3_h'] as num).toDouble();
-
-            return pw.Stack(
-              children: [
-                if (pdfImages.isNotEmpty)
-                  pw.Positioned(
-                    left: s1x * sW,
-                    top: s1y * sH,
-                    child: pw.SizedBox(
-                      width: s1w * sW,
-                      height: s1h * sH,
-                      child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.length > 1)
-                  pw.Positioned(
-                    left: s2x * sW,
-                    top: s2y * sH,
-                    child: pw.SizedBox(
-                      width: s2w * sW,
-                      height: s2h * sH,
-                      child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.length > 2)
-                  pw.Positioned(
-                    left: s3x * sW,
-                    top: s3y * sH,
-                    child: pw.SizedBox(
-                      width: s3w * sW,
-                      height: s3h * sH,
-                      child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                pw.Positioned.fill(
-                  child: pw.Image(
-                    pw.MemoryImage(t['image_data'] as Uint8List),
-                    fit: pw.BoxFit.fill,
-                    dpi: 300,
-                  ),
-                ),
-              ],
-            );
-          }
-
-          pw.Widget buildPdfStripSemi4RContent(double w4R, double h4R) {
-            final t = _selectedTemplate!;
-            final double s1x = (t['slot1_x'] as num).toDouble();
-            final double s1y = (t['slot1_y'] as num).toDouble();
-            final double s1w = (t['slot1_w'] as num).toDouble();
-            final double s1h = (t['slot1_h'] as num).toDouble();
-
-            final double s2x = (t['slot2_x'] as num).toDouble();
-            final double s2y = (t['slot2_y'] as num).toDouble();
-            final double s2w = (t['slot2_w'] as num).toDouble();
-            final double s2h = (t['slot2_h'] as num).toDouble();
-
-            final double s3x = (t['slot3_x'] as num).toDouble();
-            final double s3y = (t['slot3_y'] as num).toDouble();
-            final double s3w = (t['slot3_w'] as num).toDouble();
-            final double s3h = (t['slot3_h'] as num).toDouble();
-
-            final double s4x = ((t['slot4_x'] ?? (s1x + 0.5)) as num).toDouble();
-            final double s4y = ((t['slot4_y'] ?? s1y) as num).toDouble();
-            final double s4w = ((t['slot4_w'] ?? s1w) as num).toDouble();
-            final double s4h = ((t['slot4_h'] ?? s1h) as num).toDouble();
-
-            final double s5x = ((t['slot5_x'] ?? (s2x + 0.5)) as num).toDouble();
-            final double s5y = ((t['slot5_y'] ?? s2y) as num).toDouble();
-            final double s5w = ((t['slot5_w'] ?? s2w) as num).toDouble();
-            final double s5h = ((t['slot5_h'] ?? s2h) as num).toDouble();
-
-            final double s6x = ((t['slot6_x'] ?? (s3X(t) + 0.5)) as num).toDouble();
-            final double s6y = ((t['slot6_y'] ?? s3y) as num).toDouble();
-            final double s6w = ((t['slot6_w'] ?? s3w) as num).toDouble();
-            final double s6h = ((t['slot6_h'] ?? s3h) as num).toDouble();
-
-            return pw.Stack(
-              children: [
-                if (pdfImages.isNotEmpty)
-                  pw.Positioned(
-                    left: s1x * w4R,
-                    top: s1y * h4R,
-                    child: pw.SizedBox(
-                      width: s1w * w4R,
-                      height: s1h * h4R,
-                      child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.length > 1)
-                  pw.Positioned(
-                    left: s2x * w4R,
-                    top: s2y * h4R,
-                    child: pw.SizedBox(
-                      width: s2w * w4R,
-                      height: s2h * h4R,
-                      child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.length > 2)
-                  pw.Positioned(
-                    left: s3x * w4R,
-                    top: s3y * h4R,
-                    child: pw.SizedBox(
-                      width: s3w * w4R,
-                      height: s3h * h4R,
-                      child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.isNotEmpty)
-                  pw.Positioned(
-                    left: s4x * w4R,
-                    top: s4y * h4R,
-                    child: pw.SizedBox(
-                      width: s4w * w4R,
-                      height: s4h * h4R,
-                      child: pw.Image(pdfImages[0], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.length > 1)
-                  pw.Positioned(
-                    left: s5x * w4R,
-                    top: s5y * h4R,
-                    child: pw.SizedBox(
-                      width: s5w * w4R,
-                      height: s5h * h4R,
-                      child: pw.Image(pdfImages[1], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                if (pdfImages.length > 2)
-                  pw.Positioned(
-                    left: s6x * w4R,
-                    top: s6y * h4R,
-                    child: pw.SizedBox(
-                      width: s6w * w4R,
-                      height: s6h * h4R,
-                      child: pw.Image(pdfImages[2], fit: pw.BoxFit.cover, dpi: 300),
-                    ),
-                  ),
-                pw.Positioned.fill(
-                  child: pw.Image(
-                    pw.MemoryImage(t['image_data'] as Uint8List),
-                    fit: pw.BoxFit.fill,
-                    dpi: 300,
-                  ),
-                ),
-              ],
-            );
-          }
-
           for (int copy = 0; copy < _selectedPrintCount; copy++) {
             doc.addPage(
               pw.Page(
@@ -1419,43 +1113,22 @@ class _SessionScreenState extends State<SessionScreen> {
                         child: pw.SizedBox(
                           width: photo4RWidth,
                           height: photo4RHeight,
-                          child: _selectedTemplate != null
-                              ? (isStripMode
-                                  ? pw.Row(
-                                      children: [
-                                        pw.SizedBox(
-                                          width: photo4RWidth / 2.0,
-                                          height: photo4RHeight,
-                                          child: buildPdfStripContent(photo4RWidth / 2.0, photo4RHeight),
-                                        ),
-                                        pw.SizedBox(
-                                          width: photo4RWidth / 2.0,
-                                          height: photo4RHeight,
-                                          child: buildPdfStripContent(photo4RWidth / 2.0, photo4RHeight),
-                                        ),
-                                      ],
-                                    )
-                                  : (isStripSemi4R
-                                      ? buildPdfStripSemi4RContent(photo4RWidth, photo4RHeight)
-                                      : buildPdfStripContent(photo4RWidth, photo4RHeight)))
-                              : pw.Center(
-                                  child: pw.Column(
-                                    mainAxisAlignment: pw.MainAxisAlignment.center,
-                                    crossAxisAlignment: pw.CrossAxisAlignment.center,
-                                    children: [
-                                      for (int i = 0; i < pdfImages.length; i++)
-                                        pw.Container(
-                                          width: 120,
-                                          height: 120,
-                                          margin: pw.EdgeInsets.only(bottom: i < pdfImages.length - 1 ? 8 : 0),
-                                          decoration: pw.BoxDecoration(
-                                            border: pw.Border.all(color: PdfColors.black, width: 2),
-                                          ),
-                                          child: pw.Image(pdfImages[i], fit: pw.BoxFit.cover),
-                                        ),
-                                    ],
-                                  ),
-                                ),
+                          child: isStripMode
+                              ? pw.Row(
+                                  children: [
+                                    pw.SizedBox(
+                                      width: photo4RWidth / 2.0,
+                                      height: photo4RHeight,
+                                      child: pw.Image(compositePdfImage, fit: pw.BoxFit.fill),
+                                    ),
+                                    pw.SizedBox(
+                                      width: photo4RWidth / 2.0,
+                                      height: photo4RHeight,
+                                      child: pw.Image(compositePdfImage, fit: pw.BoxFit.fill),
+                                    ),
+                                  ],
+                                )
+                              : pw.Image(compositePdfImage, fit: pw.BoxFit.fill),
                         ),
                       ),
                     ],
@@ -1467,8 +1140,35 @@ class _SessionScreenState extends State<SessionScreen> {
           return doc.save();
         },
       );
+
+      // TAHAP 2 (UPLOAD SEMBARI PRINTER MENCETAK): Setelah perintah cetak masuk ke printer,
+      // proses kelima foto mentah + unggah softfile ke server online di latar belakang.
+      unawaited(
+        _prepareAndUploadSoftfileAfterPrint(
+          <String, dynamic>{
+            'photoPaths': _capturedPhotos.map((p) => p.path).toList(),
+            'isCameraMirrored': _isCameraMirrored,
+            'needsFilter': needsFilter,
+            'colorMatrix': effectiveMatrix,
+            'compositeBytes': compositeBytes,
+            'templateName': _selectedTemplate?['name'] ?? 'Default',
+            'orderId': safeCode,
+            'idUser': widget.user['id_user'] ?? 1,
+            'filterName': activePreset.name,
+            'printCount': _selectedPrintCount,
+            'totalPrice': _price,
+            'paymentStatus': _paymentStatus,
+          },
+          safeCode,
+        ),
+      );
     } catch (e) {
       debugPrint("Gagal melakukan pencetakan: $e");
+      if (mounted) {
+        setState(() {
+          _isUploadingSoftfile = false;
+        });
+      }
     }
 
     Future.delayed(const Duration(seconds: 4), () {
@@ -5091,4 +4791,211 @@ class _RetakeSelectionDialogState extends State<_RetakeSelectionDialog> {
       ),
     );
   }
+}
+
+/// Worker Isolate Tahap 1 (CETAK DULU):
+/// Hanya mendekode 3 foto terpilih dan merender kanvas komposit template (1800x2700 / 450 DPI)
+/// agar printer langsung mulai mencetak tanpa menunggu pemrosesan 5 foto softfile.
+Uint8List _renderPrintCompositeOnlyIsolate(Map<String, dynamic> job) {
+  final List<String> photoPaths = List<String>.from(job['photoPaths'] as List);
+  final List<int> selectedIndices = List<int>.from(job['selectedIndices'] as List);
+  final bool isCameraMirrored = job['isCameraMirrored'] as bool? ?? true;
+  final bool needsFilter = job['needsFilter'] as bool? ?? false;
+  final List<double> colorMatrix = List<double>.from(job['colorMatrix'] as List);
+  final Map<String, dynamic>? template = job['template'] as Map<String, dynamic>?;
+
+  final List<int> indicesToDecode = selectedIndices.isNotEmpty
+      ? selectedIndices
+      : List<int>.generate(math.min(3, photoPaths.length), (i) => i);
+
+  final List<img.Image> processedSelectedPhotos = [];
+  for (final int idx in indicesToDecode) {
+    if (idx < 0 || idx >= photoPaths.length) continue;
+    final f = File(photoPaths[idx]);
+    if (!f.existsSync()) continue;
+    try {
+      final img.Image? decoded = img.decodeImage(f.readAsBytesSync());
+      if (decoded != null) {
+        if (isCameraMirrored) {
+          img.flipHorizontal(decoded);
+        }
+        if (needsFilter) {
+          applyColorMatrixToImage(decoded, colorMatrix);
+        }
+        processedSelectedPhotos.add(decoded);
+      }
+    } catch (_) {}
+  }
+
+  img.Image? templateOverlay;
+  int canvasW = 1800;
+  int canvasH = 2700;
+
+  if (template != null && template['image_data'] != null) {
+    final Uint8List tplBytes = template['image_data'] as Uint8List;
+    templateOverlay = img.decodeImage(tplBytes);
+    if (templateOverlay != null && templateOverlay.width > 0 && templateOverlay.height > 0) {
+      final double aspect = templateOverlay.width / templateOverlay.height;
+      canvasH = 2700;
+      canvasW = (canvasH * aspect).round().clamp(900, 4050);
+      if (templateOverlay.width != canvasW || templateOverlay.height != canvasH) {
+        templateOverlay = img.copyResize(
+          templateOverlay,
+          width: canvasW,
+          height: canvasH,
+          interpolation: img.Interpolation.cubic,
+        );
+      }
+    }
+  }
+
+  final img.Image canvas = img.Image(width: canvasW, height: canvasH, numChannels: 4);
+  img.fill(canvas, color: img.ColorRgba8(255, 255, 255, 255));
+
+  void drawPhotoSlot(img.Image src, double sx, double sy, double sw, double sh) {
+    final int dx = (sx * canvasW).round();
+    final int dy = (sy * canvasH).round();
+    final int dw = (sw * canvasW).round().clamp(1, canvasW);
+    final int dh = (sh * canvasH).round().clamp(1, canvasH);
+
+    final double targetAspect = dw / dh;
+    final double srcAspect = src.width / src.height;
+    int cropW = src.width;
+    int cropH = src.height;
+    int cropX = 0;
+    int cropY = 0;
+
+    if (srcAspect > targetAspect) {
+      cropW = (src.height * targetAspect).round().clamp(1, src.width);
+      cropX = ((src.width - cropW) / 2).round();
+    } else {
+      cropH = (src.width / targetAspect).round().clamp(1, src.height);
+      cropY = ((src.height - cropH) / 2).round();
+    }
+
+    final img.Image cropped = img.copyCrop(src, x: cropX, y: cropY, width: cropW, height: cropH);
+    final img.Image resized = img.copyResize(
+      cropped,
+      width: dw,
+      height: dh,
+      interpolation: img.Interpolation.cubic,
+    );
+    img.compositeImage(canvas, resized, dstX: dx, dstY: dy);
+  }
+
+  if (template != null) {
+    final double s1x = (template['slot1_x'] as num).toDouble();
+    final double s1y = (template['slot1_y'] as num).toDouble();
+    final double s1w = (template['slot1_w'] as num).toDouble();
+    final double s1h = (template['slot1_h'] as num).toDouble();
+
+    final double s2x = (template['slot2_x'] as num).toDouble();
+    final double s2y = (template['slot2_y'] as num).toDouble();
+    final double s2w = (template['slot2_w'] as num).toDouble();
+    final double s2h = (template['slot2_h'] as num).toDouble();
+
+    final double s3x = (template['slot3_x'] as num).toDouble();
+    final double s3y = (template['slot3_y'] as num).toDouble();
+    final double s3w = (template['slot3_w'] as num).toDouble();
+    final double s3H = (template['slot3_h'] as num).toDouble();
+
+    if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], s1x, s1y, s1w, s1h);
+    if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], s2x, s2y, s2w, s2h);
+    if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], s3x, s3y, s3w, s3H);
+
+    if (template['template_mode'] == 'strip_semi_4r') {
+      final double s4x = ((template['slot4_x'] ?? (s1x + 0.5)) as num).toDouble();
+      final double s4y = ((template['slot4_y'] ?? s1y) as num).toDouble();
+      final double s4w = ((template['slot4_w'] ?? s1w) as num).toDouble();
+      final double s4h = ((template['slot4_h'] ?? s1h) as num).toDouble();
+
+      final double s5x = ((template['slot5_x'] ?? (s2x + 0.5)) as num).toDouble();
+      final double s5y = ((template['slot5_y'] ?? s2y) as num).toDouble();
+      final double s5w = ((template['slot5_w'] ?? s2w) as num).toDouble();
+      final double s5h = ((template['slot5_h'] ?? s2h) as num).toDouble();
+
+      final double s6x = ((template['slot6_x'] ?? (s3x + 0.5)) as num).toDouble();
+      final double s6y = ((template['slot6_y'] ?? s3y) as num).toDouble();
+      final double s6w = ((template['slot6_w'] ?? s3w) as num).toDouble();
+      final double s6h = ((template['slot6_h'] ?? s3H) as num).toDouble();
+
+      if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], s4x, s4y, s4w, s4h);
+      if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], s5x, s5y, s5w, s5h);
+      if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], s6x, s6y, s6w, s6h);
+    }
+
+    if (templateOverlay != null) {
+      img.compositeImage(canvas, templateOverlay, dstX: 0, dstY: 0);
+    }
+  } else {
+    if (processedSelectedPhotos.isNotEmpty) drawPhotoSlot(processedSelectedPhotos[0], 0.06, 0.04, 0.88, 0.28);
+    if (processedSelectedPhotos.length > 1) drawPhotoSlot(processedSelectedPhotos[1], 0.06, 0.36, 0.88, 0.28);
+    if (processedSelectedPhotos.length > 2) drawPhotoSlot(processedSelectedPhotos[2], 0.06, 0.68, 0.88, 0.28);
+  }
+
+  return Uint8List.fromList(img.encodeJpg(canvas, quality: 95));
+}
+
+/// Worker Isolate Tahap 2 (UPLOAD SEMBARI PRINTER MENCETAK):
+/// Memproses kelima foto mentah (flip mirror & filter) + enkoding Base64 & JSON di background isolate
+/// sementara printer fisik sedang berjalan mencetak kertas 4R.
+Map<String, dynamic> _prepareSoftfilePayloadIsolate(Map<String, dynamic> job) {
+  final List<String> photoPaths = List<String>.from(job['photoPaths'] as List);
+  final bool isCameraMirrored = job['isCameraMirrored'] as bool? ?? true;
+  final bool needsFilter = job['needsFilter'] as bool? ?? false;
+  final List<double> colorMatrix = List<double>.from(job['colorMatrix'] as List);
+  final Uint8List compositeBytes = job['compositeBytes'] as Uint8List;
+  final String templateName = job['templateName'] as String? ?? 'Default';
+  final String safeCode = job['orderId'] as String;
+  final dynamic idUser = job['idUser'];
+  final String filterName = job['filterName'] as String? ?? 'NORMAL';
+  final int printCount = job['printCount'] as int? ?? 1;
+  final double totalPrice = (job['totalPrice'] as num?)?.toDouble() ?? 0.0;
+  final String paymentStatus = job['paymentStatus'] as String? ?? 'settlement';
+
+  final List<Uint8List> allCapturedJpgBytes = [];
+  for (int i = 0; i < photoPaths.length; i++) {
+    final f = File(photoPaths[i]);
+    if (!f.existsSync()) continue;
+    final Uint8List rawBytes = f.readAsBytesSync();
+    if (!isCameraMirrored && !needsFilter) {
+      allCapturedJpgBytes.add(rawBytes);
+      continue;
+    }
+    try {
+      final img.Image? decoded = img.decodeImage(rawBytes);
+      if (decoded != null) {
+        if (isCameraMirrored) {
+          img.flipHorizontal(decoded);
+        }
+        if (needsFilter) {
+          applyColorMatrixToImage(decoded, colorMatrix);
+        }
+        allCapturedJpgBytes.add(Uint8List.fromList(img.encodeJpg(decoded, quality: 94)));
+      } else {
+        allCapturedJpgBytes.add(rawBytes);
+      }
+    } catch (_) {
+      allCapturedJpgBytes.add(rawBytes);
+    }
+  }
+
+  final Map<String, dynamic> payloadMap = {
+    'order_id': safeCode,
+    'id_user': idUser,
+    'template_name': templateName,
+    'filter_name': filterName,
+    'print_count': printCount,
+    'total_price': totalPrice,
+    'payment_status': paymentStatus,
+    'composite_base64': base64Encode(compositeBytes),
+    if (allCapturedJpgBytes.isNotEmpty) 'photo1_base64': base64Encode(allCapturedJpgBytes[0]),
+    if (allCapturedJpgBytes.length > 1) 'photo2_base64': base64Encode(allCapturedJpgBytes[1]),
+    if (allCapturedJpgBytes.length > 2) 'photo3_base64': base64Encode(allCapturedJpgBytes[2]),
+    if (allCapturedJpgBytes.length > 3) 'photo4_base64': base64Encode(allCapturedJpgBytes[3]),
+    if (allCapturedJpgBytes.length > 4) 'photo5_base64': base64Encode(allCapturedJpgBytes[4]),
+  };
+
+  payloadMap['_encoded_json'] = jsonEncode(payloadMap);
+  return payloadMap;
 }

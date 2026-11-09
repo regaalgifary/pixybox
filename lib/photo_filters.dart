@@ -192,11 +192,31 @@ List<double> getInterpolatedColorMatrix(
   return baseMatrix;
 }
 
-/// Menerapkan color matrix langsung ke image bytes (img.Image) sebelum cetak PDF
+/// Menerapkan color matrix langsung ke image bytes (img.Image) sebelum cetak PDF / render softfile
 void applyColorMatrixToImage(img.Image image, List<double> matrix) {
   final m00 = matrix[0], m01 = matrix[1], m02 = matrix[2], m04 = matrix[4];
   final m10 = matrix[5], m11 = matrix[6], m12 = matrix[7], m14 = matrix[9];
   final m20 = matrix[10], m21 = matrix[11], m22 = matrix[12], m24 = matrix[14];
+
+  final int ch = image.numChannels;
+  if (ch >= 3) {
+    final bytes = image.toUint8List();
+    final int len = bytes.length;
+    for (int i = 0; i <= len - ch; i += ch) {
+      final int r = bytes[i];
+      final int g = bytes[i + 1];
+      final int b = bytes[i + 2];
+
+      final int nr = (r * m00 + g * m01 + b * m02 + m04).round();
+      final int ng = (r * m10 + g * m11 + b * m12 + m14).round();
+      final int nb = (r * m20 + g * m21 + b * m22 + m24).round();
+
+      bytes[i] = nr < 0 ? 0 : (nr > 255 ? 255 : nr);
+      bytes[i + 1] = ng < 0 ? 0 : (ng > 255 ? 255 : ng);
+      bytes[i + 2] = nb < 0 ? 0 : (nb > 255 ? 255 : nb);
+    }
+    return;
+  }
 
   for (final pixel in image) {
     final r = pixel.r;
@@ -206,5 +226,35 @@ void applyColorMatrixToImage(img.Image image, List<double> matrix) {
     pixel.r = (r * m00 + g * m01 + b * m02 + m04).clamp(0, 255);
     pixel.g = (r * m10 + g * m11 + b * m12 + m14).clamp(0, 255);
     pixel.b = (r * m20 + g * m21 + b * m22 + m24).clamp(0, 255);
+  }
+}
+
+/// Mempertajam detail foto (3x3 unsharp kernel) agar hasil cetak & softfile tampak tajam dan jernih
+void sharpenImage(img.Image image, {double amount = 0.25}) {
+  final int w = image.width;
+  final int h = image.height;
+  final int ch = image.numChannels;
+  if (w < 3 || h < 3 || ch < 3 || amount <= 0.0) return;
+
+  final bytes = image.toUint8List();
+  final src = List<int>.from(bytes, growable: false);
+  final int stride = w * ch;
+  final int strengthFixed = (amount * 256).round();
+
+  for (int y = 1; y < h - 1; y++) {
+    int idx = y * stride + ch;
+    for (int x = 1; x < w - 1; x++, idx += ch) {
+      for (int c = 0; c < 3; c++) {
+        final int p = idx + c;
+        final int center = src[p];
+        final int lap = (center << 2) -
+            src[p - stride] -
+            src[p + stride] -
+            src[p - ch] -
+            src[p + ch];
+        final int val = center + ((lap * strengthFixed) >> 8);
+        bytes[p] = val < 0 ? 0 : (val > 255 ? 255 : val);
+      }
+    }
   }
 }

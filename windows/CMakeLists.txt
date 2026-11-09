@@ -106,3 +106,12 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# Copy payment credentials next to pixybox.exe so standalone Release bundles work anywhere
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/../payment_keys.json"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../doku_rsa_private.pem"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  OPTIONAL
+  COMPONENT Runtime)
+
